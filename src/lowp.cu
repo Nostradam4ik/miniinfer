@@ -18,10 +18,10 @@ __device__ __forceinline__ float to_float(__nv_bfloat16 v) { return __bfloat162f
 struct DevStats {
     unsigned long long overflow;
     unsigned long long flushed;
-    unsigned int max_rel_bits;  // невід'ємні float впорядковані так само, як їхні біти як unsigned
+    unsigned int max_rel_bits;  // non-negative floats are ordered the same way as their bits as unsigned
 };
 
-// Усі потоки блоку доходять до shuffle (немає раннього return), інакше ballot/shuffle некоректні.
+// All threads of a block reach the shuffle (no early return), otherwise ballot/shuffle are invalid.
 template <typename H, bool STATS>
 __global__ void to_lowp_kernel(const float* in, H* out, size_t n, DevStats* st) {
     const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;

@@ -1,11 +1,11 @@
 #pragma once
-// Матриці ваг у fp16 або bf16 (2 байти на елемент) і конвертація з fp32.
+// Weight matrices in fp16 or bf16 (2 bytes per element) and conversion from fp32.
 //
-// fp16:  1 знак, 5 біт експоненти, 10 біт мантиси. Діапазон до 65504, нормальні числа від 6.1e-5.
-// bf16:  1 знак, 8 біт експоненти, 7 біт мантиси. Діапазон як у fp32.
-// Чекпойнт SmolLM2 зберігається в bf16, тож bf16 відтворює ваги ТОЧНО, а fp16 теж точно для
-// значень у своєму нормальному діапазоні, але дуже малі ваги стають субнормальними (менша точність).
-// Скільки саме втрачено, показує LowpStats.
+// fp16:  1 sign, 5 exponent bits, 10 mantissa bits. Range up to 65504, normal numbers from 6.1e-5.
+// bf16:  1 sign, 8 exponent bits, 7 mantissa bits. Same range as fp32.
+// The SmolLM2 checkpoint is stored in bf16, so bf16 reproduces the weights EXACTLY. fp16 is also exact
+// for values in its normal range, but very small weights become subnormal (lower precision).
+// LowpStats shows how much exactly is lost.
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cstdint>
@@ -13,9 +13,9 @@
 
 struct LowpStats {
     size_t elements = 0;
-    size_t overflow = 0;     // скінченне значення стало inf (поза діапазоном формату)
-    size_t flushed = 0;      // ненульове значення стало нулем
-    double max_rel_error = 0;  // найбільша відносна похибка округлення серед скінченних ненульових
+    size_t overflow = 0;     // a finite value became inf (outside the range of the format)
+    size_t flushed = 0;      // a non-zero value became zero
+    double max_rel_error = 0;  // largest relative rounding error among finite non-zero values
 
     void merge(const LowpStats& o) {
         elements += o.elements;
@@ -25,7 +25,7 @@ struct LowpStats {
     }
 };
 
-// Двовимірна матриця ваг у fp16/bf16 на GPU. Володіє пам'яттю (повертає в пул), лише переміщується.
+// A 2D weight matrix in fp16/bf16 on the GPU. Owns its memory (returns it to the pool), move-only.
 class LowpMatrix {
 public:
     LowpMatrix() = default;
@@ -67,7 +67,7 @@ public:
     int rows() const { return shape_.empty() ? 0 : shape_[0]; }
     int cols() const { return shape_.size() < 2 ? 0 : shape_[1]; }
 
-    operator WeightRef() const { return WeightRef(data_, dtype_, rows(), cols()); }  // NOLINT: неявно навмисно
+    operator WeightRef() const { return WeightRef(data_, dtype_, rows(), cols()); }  // NOLINT: implicit on purpose
 
 private:
     void release() {
@@ -80,14 +80,14 @@ private:
     std::vector<int> shape_;
 };
 
-// fp32 -> fp16/bf16 на GPU (округлення до найближчого парного). Якщо stats != nullptr, заповнює
-// статистику втрат (трохи повільніше). Тензор має бути 2D.
+// fp32 -> fp16/bf16 on the GPU (round to nearest even). If stats != nullptr, fills in
+// the loss statistics (slightly slower). The tensor must be 2D.
 LowpMatrix to_lowp(const Tensor& w, DType dtype, LowpStats* stats = nullptr);
 
-// fp16/bf16 -> fp32 на GPU (для тестів і діагностики).
+// fp16/bf16 -> fp32 on the GPU (for tests and diagnostics).
 Tensor from_lowp(const LowpMatrix& m);
 
-// Те саме округлення на хості: значення, яке отримає елемент після to_lowp. Для еталонів у тестах.
+// The same rounding on the host: the value an element gets after to_lowp. For test references.
 inline float round_to_dtype(float x, DType dt) {
     if (dt == DType::F16) return __half2float(__float2half_rn(x));
     if (dt == DType::BF16) return __bfloat162float(__float2bfloat16_rn(x));

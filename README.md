@@ -200,8 +200,6 @@ tools/      export_reference.py (model + PyTorch reference), chat.py (tokenizati
             compare_llamacpp.py (benchmark against llama.cpp)
 ```
 
-Source comments are written in Ukrainian.
-
 ## Limitations
 
 - Single model family (Llama-style, small), single GPU, batch size 1 in the optimized decode path.

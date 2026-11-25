@@ -34,6 +34,6 @@ TEST(tensor_move_transfers_ownership) {
     const float* ptr = a.data();
     Tensor b = std::move(a);
     CHECK(b.data() == ptr);
-    CHECK(a.data() == nullptr);  // NOLINT: після переміщення a порожній
+    CHECK(a.data() == nullptr);  // NOLINT: a is empty after the move
     CHECK(b.to_host()[3] == 4.f);
 }

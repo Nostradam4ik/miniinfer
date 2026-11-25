@@ -1,11 +1,11 @@
-"""Експорт для C++ рушія: ваги моделі + еталонні активації PyTorch.
+"""Export for the C++ engine: model weights + PyTorch reference activations.
 
-Запуск:  .venv\\Scripts\\python.exe tools\\export_reference.py
+Usage:  .venv\\Scripts\\python.exe tools\\export_reference.py
 
-Створює папку model/ (ваги fp32 + manifest.txt + config.json) і reference/
-(вхідні токени та проміжні результати для перевірки ядер).
-Формат маніфесту (рядок на тензор):  ім'я dtype ndim d0 d1 ... зсув_у_байтах
-Усі тензори - сирий little-endian float32 (або int32 для токенів).
+Creates the model/ directory (fp32 weights + manifest.txt + config.json) and reference/
+(input tokens and intermediate results for checking the kernels).
+Manifest format (one line per tensor):  name dtype ndim d0 d1 ... byte_offset
+All tensors are raw little-endian float32 (int32 for tokens).
 """
 import json
 import os
@@ -24,7 +24,7 @@ REF_DIR = os.path.join(ROOT, "reference")
 
 
 class BinWriter:
-    """Пише тензори в один .bin і ведемо маніфест."""
+    """Writes tensors into one .bin file and keeps a manifest."""
 
     def __init__(self, directory, name):
         os.makedirs(directory, exist_ok=True)
@@ -50,7 +50,7 @@ class BinWriter:
 
 
 def main():
-    print("Завантаження моделі...", MODEL_ID)
+    print("Loading the model...", MODEL_ID)
     path = snapshot_download(MODEL_ID)
     tok = AutoTokenizer.from_pretrained(path)
     model = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32)
@@ -58,9 +58,9 @@ def main():
     cfg = model.config
     print(cfg)
 
-    # --- конфіг, потрібний рушію ---
+    # --- config needed by the engine ---
     os.makedirs(MODEL_DIR, exist_ok=True)
-    tok.save_pretrained(MODEL_DIR)  # токенізатор для tools/chat.py
+    tok.save_pretrained(MODEL_DIR)  # tokenizer for tools/chat.py
     engine_cfg = {
         "vocab_size": cfg.vocab_size,
         "hidden_size": cfg.hidden_size,
@@ -76,20 +76,20 @@ def main():
     }
     with open(os.path.join(MODEL_DIR, "config.json"), "w") as f:
         json.dump(engine_cfg, f, indent=2)
-    # Для C++ без JSON-парсера: ключ значення на рядок.
+    # For C++ without a JSON parser: one "key value" per line.
     with open(os.path.join(MODEL_DIR, "config.txt"), "w") as f:
         for k, v in engine_cfg.items():
             f.write(f"{k} {int(v) if isinstance(v, bool) else v}\n")
     print("config:", engine_cfg)
 
-    # --- ваги ---
+    # --- weights ---
     w = BinWriter(MODEL_DIR, "weights")
     for name, p in model.state_dict().items():
         w.add(name, p.detach().cpu().numpy())
     w.close()
-    print("ваги записано, байтів:", w.offset)
+    print("weights written, bytes:", w.offset)
 
-    # --- еталонні активації ---
+    # --- reference activations ---
     ids = tok(PROMPT, return_tensors="pt").input_ids
     print("prompt ids:", ids.tolist())
 
@@ -98,7 +98,7 @@ def main():
     def hook(name):
         def fn(_mod, _inp, out):
             t = out[0] if isinstance(out, tuple) else out
-            captured[name] = t.detach().cpu().numpy()[0]  # прибираємо batch
+            captured[name] = t.detach().cpu().numpy()[0]  # drop the batch dimension
         return fn
 
     layer0 = model.model.layers[0]
@@ -114,7 +114,7 @@ def main():
     layer0.register_forward_hook(hook("l0.out"))
     model.model.norm.register_forward_hook(hook("final_norm"))
 
-    # Вхід o_proj = результат attention до вихідної проєкції (контекст по всіх головах).
+    # Input of o_proj = result of attention before the output projection (context over all heads).
     def pre_hook(name):
         def fn(_mod, args):
             captured[name] = args[0].detach().cpu().numpy()[0]
@@ -125,7 +125,7 @@ def main():
     with torch.no_grad():
         out = model(ids, output_hidden_states=True)
 
-    # RoPE шару 0, порахований функціями transformers (незалежний від нашого коду).
+    # RoPE of layer 0 computed with the transformers functions (independent of our code).
     from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
 
     T = ids.shape[1]
@@ -142,13 +142,13 @@ def main():
     r.add("input_ids", ids[0].numpy().astype(np.int32))
     for k_, v_ in captured.items():
         r.add(k_, v_)
-    # Вихід кожного шару (hidden_states[0] = embeddings, потім 30 шарів; останній - після final norm)
+    # Output of every layer (hidden_states[0] = embeddings, then 30 layers; the last is after the final norm)
     for i, hs in enumerate(out.hidden_states):
         r.add(f"hidden_states.{i}", hs[0].numpy())
     r.add("logits", out.logits[0].numpy())
     r.close()
 
-    # Еталонна greedy-генерація (для перевірки KV-кешу й циклу генерації в C++).
+    # Reference greedy generation (to check the KV cache and the generation loop in C++).
     gen_prompts = {
         "gen1": PROMPT,
         "gen2": "Once upon a time, in a small village near the sea, there lived",
@@ -166,11 +166,11 @@ def main():
         print(key, repr(text), "->", repr(tok.decode(new)))
     g.close()
 
-    # Що модель передбачає далі
+    # What the model predicts next
     nxt = int(out.logits[0, -1].argmax())
-    print("наступний токен:", nxt, repr(tok.decode([nxt])))
-    print("reference записано, байтів:", r.offset)
-    print(f"ГОТОВО: {PROMPT!r} -> {tok.decode([nxt])!r}")
+    print("next token:", nxt, repr(tok.decode([nxt])))
+    print("reference written, bytes:", r.offset)
+    print(f"DONE: {PROMPT!r} -> {tok.decode([nxt])!r}")
 
 
 if __name__ == "__main__":

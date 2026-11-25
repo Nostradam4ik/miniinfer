@@ -28,7 +28,7 @@ std::vector<float> random_vec(size_t n, unsigned seed) {
 
 }  // namespace
 
-// Ручний приклад: [[1,2,3],[4,5,6]] * [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
+// Hand-made example: [[1,2,3],[4,5,6]] * [[7,8],[9,10],[11,12]] = [[58,64],[139,154]]
 TEST(matmul_known_values_all_kinds) {
     Tensor A = Tensor::from_host({1, 2, 3, 4, 5, 6}, {2, 3});
     Tensor B = Tensor::from_host({7, 8, 9, 10, 11, 12}, {3, 2});
@@ -41,7 +41,7 @@ TEST(matmul_known_values_all_kinds) {
     }
 }
 
-// A * I = A: перевірка без CPU-еталона.
+// A * I = A: a check without a CPU reference.
 TEST(matmul_identity) {
     const int n = 33;
     std::vector<float> a = random_vec(n * n, 1), eye(n * n, 0.f);
@@ -51,8 +51,8 @@ TEST(matmul_identity) {
         CHECK_NEAR(max_abs_diff(matmul(A, I, k).to_host(), a), 0.0, 1e-6);
 }
 
-// Різні форми, у т.ч. не кратні розміру плитки (16 і 64): саме тут ховаються
-// помилки в перевірках меж.
+// Various shapes, including ones that are not multiples of the tile size (16 and 64): that is where
+// bounds-check bugs hide.
 TEST(matmul_matches_cpu_for_many_shapes) {
     struct Shape { int M, K, N; };
     const Shape shapes[] = {{1, 1, 1},    {1, 7, 5},     {5, 1, 7},   {16, 16, 16},
@@ -86,11 +86,11 @@ TEST(matmul_all_kinds_agree) {
     CHECK_NEAR(max_abs_diff(matmul(A, B, MatmulKind::Reg).to_host(), naive), 0.0, 1e-4);
 }
 
-// Буфер з "отрутою" (NaN) за межами даних: будь-яке читання за межами A чи B
-// дає NaN у результаті, а будь-який запис за межі C змінює отруту.
-// Без цього тесту такі баги ховаються, бо пам'ять за буфером зазвичай нульова.
+// A buffer with "poison" (NaN) beyond the data: any read outside A or B puts NaN into the result,
+// and any write outside C changes the poison.
+// Without this test such bugs stay hidden, because memory past a buffer is usually zero.
 TEST(matmul_does_not_touch_memory_out_of_bounds) {
-    const size_t kPad = 20000;  // з запасом більше, ніж може зачепити ядро
+    const size_t kPad = 20000;  // comfortably more than a kernel could touch
     struct Shape { int M, K, N; };
     const Shape shapes[] = {{1, 1, 1}, {17, 33, 65}, {65, 20, 63}, {5, 100, 7}, {70, 3, 70}};
     for (const Shape& s : shapes) {
@@ -117,17 +117,17 @@ TEST(matmul_does_not_touch_memory_out_of_bounds) {
             std::vector<float> c(nc + kPad);
             CUDA_CHECK(cudaMemcpy(c.data(), dC, c.size() * sizeof(float), cudaMemcpyDeviceToHost));
             std::vector<float> head(c.begin(), c.begin() + nc);
-            bool ok = max_abs_diff(head, ref) < 1e-3;  // NaN дає false
+            bool ok = max_abs_diff(head, ref) < 1e-3;  // NaN gives false
             for (size_t i = nc; i < c.size() && ok; ++i) {
                 unsigned bits;
                 std::memcpy(&bits, &c[i], 4);
-                if (bits != 0xFFFFFFFFu) ok = false;  // ядро писало за межі C
+                if (bits != 0xFFFFFFFFu) ok = false;  // the kernel wrote outside C
             }
             if (!ok) {
                 cudaFree(dA); cudaFree(dB); cudaFree(dC);
                 std::ostringstream os;
                 os << kind_name(k) << " M=" << s.M << " K=" << s.K << " N=" << s.N
-                   << ": читання/запис за межами буфера";
+                   << ": out-of-bounds read/write";
                 throw TestFailure(os.str());
             }
         }
@@ -145,16 +145,16 @@ TEST(matmul_rejects_non_2d) {
     CHECK_THROWS(matmul(A, B));
 }
 
-// Нульове K: порожня сума = нулі, а не сміття в пам'яті.
+// K = 0: an empty sum is zeros, not leftover memory.
 TEST(matmul_zero_inner_dimension_gives_zeros) {
     Tensor A({3, 0}), B({0, 4});
     for (MatmulKind k : kKinds)
         for (float v : matmul(A, B, k).to_host()) CHECK(v == 0.f);
 }
 
-// ---- GEMV (малі M) ---------------------------------------------------------
+// ---- GEMV (small M) ---------------------------------------------------------
 
-// Форми декодування: M = 1..5, N і K різні, у т.ч. не кратні 32 (ширина блоку) і 16 (розбиття K).
+// Decode shapes: M = 1..5, various N and K, including non-multiples of 32 (block width) and 16 (K split).
 TEST(gemv_matches_cpu_for_decode_shapes) {
     struct S { int M, K, N; };
     const S shapes[] = {{1, 1, 1},     {1, 5, 1},     {1, 16, 32},   {1, 17, 33},   {1, 576, 192},
@@ -174,7 +174,7 @@ TEST(gemv_matches_cpu_for_decode_shapes) {
     }
 }
 
-// Рядки не змішуються: кожен рядок M дає той самий результат, що й окремий запуск з M=1.
+// Rows do not mix: every row of M gives the same result as a separate launch with M=1.
 TEST(gemv_rows_are_independent) {
     const int M = 4, K = 70, N = 90;
     std::vector<float> a = random_vec(M * K, 1), b = random_vec(K * N, 2);
@@ -187,7 +187,7 @@ TEST(gemv_rows_are_independent) {
     }
 }
 
-// Auto: малі M ідуть у Gemv, великі в Reg; результат у обох випадках правильний.
+// Auto: small M goes to Gemv, large M to Reg; the result is correct in both cases.
 TEST(matmul_auto_is_correct_on_both_sides_of_threshold) {
     const int K = 64, N = 70;
     for (int M : {1, kGemvMaxRows, kGemvMaxRows + 1, 100}) {

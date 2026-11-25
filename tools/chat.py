@@ -1,10 +1,10 @@
-"""Текстовий інтерфейс до generate.exe: токенізує промпт, стрімить відповідь.
+"""Text interface to generate.exe: tokenizes the prompt and streams the answer.
 
-Приклад:
+Example:
   .venv\\Scripts\\python.exe tools\\chat.py "Once upon a time" --max 60 --temp 0.8 --top-p 0.95
 
-Токенізатор бере з model/ (його зберігає tools/export_reference.py).
-Це базова модель (не instruct): вона продовжує текст, а не відповідає на питання.
+The tokenizer is loaded from model/ (saved there by tools/export_reference.py).
+This is a base model (not instruct): it continues text, it does not answer questions.
 """
 import argparse
 import os
@@ -18,25 +18,25 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("prompt", help="початок тексту")
-    ap.add_argument("--max", type=int, default=64, help="скільки нових токенів")
-    ap.add_argument("--temp", type=float, default=0.0, help="температура; 0 = greedy")
+    ap.add_argument("prompt", help="beginning of the text")
+    ap.add_argument("--max", type=int, default=64, help="number of new tokens")
+    ap.add_argument("--temp", type=float, default=0.0, help="temperature; 0 = greedy")
     ap.add_argument("--top-k", type=int, default=0)
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dtype", choices=["f32", "f16", "bf16"], default="bf16",
-                    help="формат ваг (bf16: вдвічі менше пам'яті, без втрат точності)")
-    ap.add_argument("--no-graph", action="store_true", help="не використовувати CUDA-граф для декодування")
+                    help="weight format (bf16: half the memory, no precision loss)")
+    ap.add_argument("--no-graph", action="store_true", help="do not use a CUDA graph for decoding")
     ap.add_argument("--exe", default=os.path.join(ROOT, "build", "generate.exe"))
     ap.add_argument("--model", default=os.path.join(ROOT, "model"))
     args = ap.parse_args()
 
     if not os.path.exists(args.exe):
-        sys.exit(f"не знайдено {args.exe}: спершу запустіть build.bat")
+        sys.exit(f"{args.exe} not found: run build.bat first")
     tok = AutoTokenizer.from_pretrained(args.model)
     ids = tok(args.prompt).input_ids
     if not ids:
-        sys.exit("порожній промпт")
+        sys.exit("empty prompt")
 
     cmd = [
         args.exe, "--model", args.model,
@@ -54,8 +54,8 @@ def main():
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     print(args.prompt, end="", flush=True)
 
-    # Інкрементальне декодування: токен може бути частиною символу UTF-8, тоді decode дає
-    # "�" і ми чекаємо наступний токен, а не друкуємо сміття.
+    # Incremental detokenization: a token can be part of a UTF-8 character; decode then returns
+    # "�" and we wait for the next token instead of printing garbage.
     generated, printed = [], ""
     for line in proc.stdout:
         if not line.startswith("tok "):

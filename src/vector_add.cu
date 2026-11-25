@@ -1,5 +1,5 @@
-// День 3-4: додавання векторів, перевірка на CPU, вимірювання часу.
-// ЗАВДАННЯ: пограйте розміром блоку (64, 128, 256, 512) і запишіть час.
+// Vector addition: check on the CPU and measure the time.
+// EXERCISE: vary the block size (64, 128, 256, 512) and record the time.
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -11,7 +11,7 @@ __global__ void vector_add(const float* a, const float* b, float* c, int n) {
 }
 
 int main() {
-    const int n = 1 << 24;  // ~16 млн елементів
+    const int n = 1 << 24;  // ~16M elements
     const size_t bytes = n * sizeof(float);
 
     std::vector<float> h_a(n), h_b(n), h_c(n);
@@ -29,14 +29,14 @@ int main() {
 
     for (int block : {64, 128, 256, 512}) {
         int grid = (n + block - 1) / block;
-        vector_add<<<grid, block>>>(d_a, d_b, d_c, n);  // прогрів
+        vector_add<<<grid, block>>>(d_a, d_b, d_c, n);  // warm-up
         GpuTimer timer;
         timer.start();
         vector_add<<<grid, block>>>(d_a, d_b, d_c, n);
         float ms = timer.stop();
         CUDA_CHECK(cudaGetLastError());
-        // читаємо 2 масиви і пишемо 1: 3 * bytes
-        std::printf("block=%4d  %.3f мс  %.1f ГБ/с\n", block, ms,
+        // reads 2 arrays and writes 1: 3 * bytes
+        std::printf("block=%4d  %.3f ms  %.1f GB/s\n", block, ms,
                     3.0 * bytes / (ms * 1e-3) / 1e9);
     }
 
@@ -44,7 +44,7 @@ int main() {
     int errors = 0;
     for (int i = 0; i < n; ++i)
         if (std::fabs(h_c[i] - (h_a[i] + h_b[i])) > 1e-5f) ++errors;
-    std::printf(errors ? "ПОМИЛКИ: %d\n" : "OK: результат правильний\n", errors);
+    std::printf(errors ? "ERRORS: %d\n" : "OK: the result is correct\n", errors);
 
     cudaFree(d_a);
     cudaFree(d_b);

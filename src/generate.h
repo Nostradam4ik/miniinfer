@@ -1,5 +1,5 @@
 #pragma once
-// Цикл генерації: prefill промпту, потім по одному токену з KV-кешем.
+// Generation loop: prefill the prompt, then one token at a time with the KV cache.
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -11,19 +11,19 @@
 struct GenerateOptions {
     int max_new_tokens = 64;
     SamplerConfig sampler;
-    std::vector<int> stop_ids;  // токен із цього списку зупиняє генерацію (сам не додається)
-    bool use_graph = false;     // кроки декодування через CUDA-граф (швидше; див. graph.cuh)
+    std::vector<int> stop_ids;  // a token from this list stops generation (it is not appended)
+    bool use_graph = false;     // run decode steps through a CUDA graph (faster; see graph.cuh)
 };
 
 struct GenerateResult {
-    std::vector<int> tokens;  // лише нові токени, без промпту й без стоп-токена
+    std::vector<int> tokens;  // new tokens only, without the prompt and the stop token
     bool hit_stop = false;
-    double prefill_ms = 0;    // обробка промпту
-    double decode_ms = 0;     // усі кроки по одному токену
-    double graph_capture_ms = 0;  // захоплення графа (одноразово на виклик generate; не входить у decode_ms)
+    double prefill_ms = 0;    // prompt processing
+    double decode_ms = 0;     // all single-token steps
+    double graph_capture_ms = 0;  // graph capture (once per generate() call; not part of decode_ms)
 };
 
-// on_token викликається одразу після кожного нового токена (для стрімінгу).
+// on_token is called right after each new token (for streaming).
 inline GenerateResult generate(const Model& model, const std::vector<int>& prompt,
                                const GenerateOptions& opt,
                                const std::function<void(int)>& on_token = nullptr) {
@@ -49,11 +49,11 @@ inline GenerateResult generate(const Model& model, const std::vector<int>& promp
     };
 
     auto t0 = clock::now();
-    std::vector<float> logits = model.forward_cached(prompt, cache, true).to_host();  // to_host синхронізує
+    std::vector<float> logits = model.forward_cached(prompt, cache, true).to_host();  // to_host synchronizes
     auto t1 = clock::now();
     res.prefill_ms = ms(t0, t1);
 
-    // Граф має сенс, лише якщо буде хоча б один крок декодування (останній токен не потребує проходу).
+    // The graph only makes sense if there is at least one decode step (the last token needs no forward pass).
     std::unique_ptr<DecodeGraph> graph;
     if (opt.use_graph && opt.max_new_tokens > 1) {
         auto g0 = clock::now();
@@ -69,7 +69,7 @@ inline GenerateResult generate(const Model& model, const std::vector<int>& promp
         }
         res.tokens.push_back(tok);
         if (on_token) on_token(tok);
-        if (i + 1 == opt.max_new_tokens) break;  // останній токен: наступний прохід не потрібен
+        if (i + 1 == opt.max_new_tokens) break;  // last token: no further forward pass needed
         auto s0 = clock::now();
         if (graph)
             graph->step(tok, logits);

@@ -1,5 +1,5 @@
 #pragma once
-// Перетворення елемента ваг на float у ядрах (device). Один шаблонний інтерфейс для fp32/fp16/bf16.
+// Converting a weight element to float inside (device) kernels. One templated interface for fp32/fp16/bf16.
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
@@ -13,9 +13,9 @@ __device__ __forceinline__ float wt_to_float<__half>(__half v) { return __half2f
 template <>
 __device__ __forceinline__ float wt_to_float<__nv_bfloat16>(__nv_bfloat16 v) { return __bfloat162float(v); }
 
-// Завантажує VEC сусідніх елементів ваг за адресою p і перетворює на float.
-// Для VEC > 1 адреса має бути вирівняна на VEC * sizeof(WT) (GEMV-запускачі це гарантують:
-// N кратне VEC, а буфери з пулу вирівняні на 256 байтів).
+// Loads VEC adjacent weight elements at address p and converts them to float.
+// For VEC > 1 the address must be aligned to VEC * sizeof(WT) (the GEMV launchers guarantee it:
+// N is a multiple of VEC and pool buffers are aligned to 256 bytes).
 template <typename WT, int VEC>
 __device__ __forceinline__ void load_weights(const WT* p, float (&out)[VEC]) {
     if constexpr (VEC == 1) {

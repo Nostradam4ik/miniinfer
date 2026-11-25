@@ -17,7 +17,7 @@ std::vector<float> rnd(size_t n, unsigned seed, float scale = 1.f) {
 // ---- embedding -------------------------------------------------------------
 
 TEST(embedding_picks_rows) {
-    // таблиця 4x3: рядок i = {i, i+0.5, i+0.25}
+    // a 4x3 table: row i = {i, i+0.5, i+0.25}
     std::vector<float> t;
     for (int i = 0; i < 4; ++i) t.insert(t.end(), {float(i), i + 0.5f, i + 0.25f});
     Tensor table = Tensor::from_host(t, {4, 3});
@@ -54,8 +54,8 @@ TEST(write_rows_rejects_overflow_and_bad_shapes) {
     Tensor dst({4, 3}), src({2, 3});
     CHECK_THROWS(write_rows(dst, src, 3));   // 3 + 2 > 4
     CHECK_THROWS(write_rows(dst, src, -1));
-    CHECK_THROWS(write_rows(dst, Tensor({2, 4}), 0));  // різна кількість стовпців
-    write_rows(dst, src, 2);                 // рівно до краю: дозволено
+    CHECK_THROWS(write_rows(dst, Tensor({2, 4}), 0));  // different number of columns
+    write_rows(dst, src, 2);                 // exactly up to the edge: allowed
 }
 
 TEST(slice_rows_extracts_range) {
@@ -64,7 +64,7 @@ TEST(slice_rows_extracts_range) {
     const float want[] = {3, 4, 5, 6};
     CHECK(h.size() == 4);
     for (int i = 0; i < 4; ++i) CHECK(h[i] == want[i]);
-    CHECK(slice_rows(x, 4, 0).numel() == 0);  // порожній зріз у кінці
+    CHECK(slice_rows(x, 4, 0).numel() == 0);  // empty slice at the end
     CHECK_THROWS(slice_rows(x, 3, 2));
     CHECK_THROWS(slice_rows(x, -1, 1));
 }
@@ -79,7 +79,7 @@ TEST(transpose_known_values) {
     for (int i = 0; i < 6; ++i) CHECK(h[i] == want[i]);
 }
 
-// Форми навколо розміру плитки 32 і не кратні йому: тут ховаються помилки меж.
+// Shapes around the tile size 32 and non-multiples of it: bounds bugs hide here.
 TEST(transpose_matches_cpu_and_roundtrips) {
     struct S { int R, C; };
     const S shapes[] = {{1, 1}, {1, 40}, {40, 1}, {31, 33}, {32, 32}, {33, 31}, {64, 65}, {100, 7}, {576, 1536}};
@@ -95,7 +95,7 @@ TEST(transpose_matches_cpu_and_roundtrips) {
                     os << "R=" << s.R << " C=" << s.C << " mismatch at (" << i << "," << j << ")";
                     throw TestFailure(os.str());
                 }
-        CHECK(transpose(t).to_host() == x);  // двічі = початковий
+        CHECK(transpose(t).to_host() == x);  // twice = original
     }
 }
 
@@ -119,7 +119,7 @@ TEST(silu_mul_known_values) {
     CHECK_NEAR(o[3], 2.0 / (1.0 + std::exp(-2.0)) * 0.5, 1e-6);
 }
 
-// Екстремальні входи не мають давати NaN: exp(-x) при x = -1000 переповнюється в inf.
+// Extreme inputs must not produce NaN: exp(-x) at x = -1000 overflows to inf.
 TEST(silu_mul_is_stable_for_extreme_inputs) {
     Tensor g = Tensor::from_host({-1000.f, -100.f, 100.f, 1000.f}, {4});
     Tensor u = Tensor::from_host({1.f, 1.f, 2.f, 1.f}, {4});
@@ -141,13 +141,13 @@ TEST(rope_position_zero_is_identity) {
                0.0, 1e-7);
 }
 
-// hd = 2, theta довільна: кут = pos * theta^0 = pos, (1,0) -> (cos pos, sin pos).
+// hd = 2, any theta: angle = pos * theta^0 = pos, (1,0) -> (cos pos, sin pos).
 TEST(rope_known_rotation) {
-    Tensor x = Tensor::from_host({1.f, 0.f, 1.f, 0.f}, {2, 2});  // два токени, одна голова
+    Tensor x = Tensor::from_host({1.f, 0.f, 1.f, 0.f}, {2, 2});  // two tokens, one head
     std::vector<float> y = rope(x, 1, 2, 10000.f).to_host();
-    CHECK_NEAR(y[0], 1.0, 1e-6);          // позиція 0
+    CHECK_NEAR(y[0], 1.0, 1e-6);          // position 0
     CHECK_NEAR(y[1], 0.0, 1e-6);
-    CHECK_NEAR(y[2], std::cos(1.0), 1e-6);  // позиція 1
+    CHECK_NEAR(y[2], std::cos(1.0), 1e-6);  // position 1
     CHECK_NEAR(y[3], std::sin(1.0), 1e-6);
 }
 
@@ -160,7 +160,7 @@ TEST(rope_matches_cpu_for_many_shapes) {
         std::vector<float> ref = cpu_rope(x, s.T, s.H, s.hd, s.theta, s.off);
         Tensor y = rope(Tensor::from_host(x, {s.T, s.H * s.hd}), s.H, s.hd, s.theta, s.off);
         double d = max_abs_diff(y.to_host(), ref);
-        if (d > 2e-4) {  // sinf/cosf в float для великих кутів (pos ~1000) дають похибку ~1e-4
+        if (d > 2e-4) {  // float sinf/cosf at large angles (pos ~1000) give an error of ~1e-4
             std::ostringstream os;
             os << "T=" << s.T << " H=" << s.H << " hd=" << s.hd << " off=" << s.off << " diff=" << d;
             throw TestFailure(os.str());
@@ -168,7 +168,7 @@ TEST(rope_matches_cpu_for_many_shapes) {
     }
 }
 
-// Обертання зберігає довжину кожної пари: це ловить помилку знаку (a*c + b*s).
+// The rotation preserves the length of each pair: this catches a sign error (a*c + b*s).
 TEST(rope_preserves_pair_norm) {
     const int T = 6, H = 2, hd = 16;
     std::vector<float> x = rnd(T * H * hd, 3);
@@ -181,7 +181,7 @@ TEST(rope_preserves_pair_norm) {
         }
 }
 
-// KV-кеш: rope хвоста з pos_offset = rope повної послідовності, обрізаної до хвоста.
+// KV cache: rope of a tail with pos_offset = rope of the full sequence cut down to the tail.
 TEST(rope_offset_equals_slice_of_full) {
     const int T = 10, H = 2, hd = 8, off = 6;
     std::vector<float> x = rnd(T * H * hd, 4);
@@ -195,7 +195,7 @@ TEST(rope_offset_equals_slice_of_full) {
 
 TEST(rope_invalid_args_throw) {
     Tensor x({2, 12});
-    CHECK_THROWS(rope(x, 3, 3, 10000.f));   // непарний head_dim
+    CHECK_THROWS(rope(x, 3, 3, 10000.f));   // odd head_dim
     CHECK_THROWS(rope(x, 2, 4, 10000.f));   // 2*4 != 12
     CHECK_THROWS(rope(x, 3, 4, 10000.f, -1));
 }
@@ -203,7 +203,7 @@ TEST(rope_invalid_args_throw) {
 // ---- attention -------------------------------------------------------------
 
 TEST(attention_single_token_returns_v) {
-    // Один токен бачить лише себе: softmax по одному елементу = 1, результат = v.
+    // A single token sees only itself: softmax over one element = 1, result = v.
     const int H = 2, KV = 2, hd = 4;
     Tensor q = Tensor::from_host(rnd(H * hd, 1), {1, H * hd});
     Tensor k = Tensor::from_host(rnd(KV * hd, 2), {1, KV * hd});
@@ -212,10 +212,10 @@ TEST(attention_single_token_returns_v) {
     CHECK_NEAR(max_abs_diff(out, v), 0.0, 1e-6);
 }
 
-// Q = 0: усі оцінки 0, softmax рівномірний, результат = середнє V по видимих ключах.
+// Q = 0: all scores are 0, softmax is uniform, the result is the mean of V over the visible keys.
 TEST(attention_uniform_scores_average_values) {
     const int T = 4, H = 1, KV = 1, hd = 2;
-    Tensor q({T, hd});  // нулі
+    Tensor q({T, hd});  // zeros
     Tensor k = Tensor::from_host(rnd(T * hd, 1), {T, hd});
     std::vector<float> v = rnd(T * hd, 2);
     std::vector<float> out = attention(q, k, Tensor::from_host(v, {T, hd}), H, KV, hd).to_host();
@@ -250,7 +250,7 @@ TEST(attention_matches_cpu_for_many_shapes) {
     }
 }
 
-// Причинність: зміна ключів/значень ПІСЛЯ позиції t не може змінити вихід у позиції <= t.
+// Causality: changing keys/values AFTER position t cannot change the output at positions <= t.
 TEST(attention_is_causal) {
     const int T = 8, H = 2, KV = 1, hd = 8, cut = 4;
     std::vector<float> q = rnd(T * H * hd, 1), k = rnd(T * KV * hd, 2), v = rnd(T * KV * hd, 3);
@@ -265,28 +265,28 @@ TEST(attention_is_causal) {
         for (int d = 0; d < H * hd; ++d) CHECK(a[t * H * hd + d] == b[t * H * hd + d]);
 }
 
-// GQA: голови однієї групи з однаковим Q мають давати однаковий результат,
-// а голови різних груп (інші K/V) - різний.
+// GQA: heads of one group with the same Q must give the same result,
+// and heads of different groups (different K/V) must differ.
 TEST(attention_gqa_heads_share_kv_groups) {
     const int T = 5, H = 4, KV = 2, hd = 8;
     std::vector<float> head = rnd(T * hd, 9), q(T * H * hd);
     for (int t = 0; t < T; ++t)
         for (int h = 0; h < H; ++h)
-            for (int d = 0; d < hd; ++d) q[(t * H + h) * hd + d] = head[t * hd + d];  // той самий Q
+            for (int d = 0; d < hd; ++d) q[(t * H + h) * hd + d] = head[t * hd + d];  // same Q
     std::vector<float> out = attention(Tensor::from_host(q, {T, H * hd}),
                                        Tensor::from_host(rnd(T * KV * hd, 1), {T, KV * hd}),
                                        Tensor::from_host(rnd(T * KV * hd, 2), {T, KV * hd}), H, KV, hd)
                                  .to_host();
     const int t = T - 1;
     for (int d = 0; d < hd; ++d) {
-        CHECK(out[(t * H + 0) * hd + d] == out[(t * H + 1) * hd + d]);  // група 0
-        CHECK(out[(t * H + 2) * hd + d] == out[(t * H + 3) * hd + d]);  // група 1
+        CHECK(out[(t * H + 0) * hd + d] == out[(t * H + 1) * hd + d]);  // group 0
+        CHECK(out[(t * H + 2) * hd + d] == out[(t * H + 3) * hd + d]);  // group 1
     }
     CHECK(max_abs_diff(std::vector<float>(out.begin() + (t * H + 0) * hd, out.begin() + (t * H + 1) * hd),
                        std::vector<float>(out.begin() + (t * H + 2) * hd, out.begin() + (t * H + 3) * hd)) > 1e-3);
 }
 
-// KV-кеш: attention хвоста з pos_offset = відповідні рядки attention усієї послідовності.
+// KV cache: attention of a tail with pos_offset = the matching rows of attention over the whole sequence.
 TEST(attention_offset_equals_slice_of_full) {
     const int T = 9, H = 3, KV = 1, hd = 8, off = 5;
     std::vector<float> q = rnd(T * H * hd, 1), k = rnd(T * KV * hd, 2), v = rnd(T * KV * hd, 3);
@@ -298,7 +298,7 @@ TEST(attention_offset_equals_slice_of_full) {
     CHECK_NEAR(max_abs_diff(tail, std::vector<float>(full.begin() + off * H * hd, full.end())), 0.0, 1e-6);
 }
 
-// Великі значення Q.K: без віднімання максимуму exp переповниться. Результат має бути скінченним.
+// Large Q.K values: without subtracting the maximum, exp would overflow. The result must be finite.
 TEST(attention_is_numerically_stable_for_large_scores) {
     const int T = 3, hd = 4;
     std::vector<float> big(T * hd, 100.f);
@@ -309,11 +309,11 @@ TEST(attention_is_numerically_stable_for_large_scores) {
 
 TEST(attention_invalid_args_throw) {
     Tensor q({2, 8}), k({2, 4}), v({2, 4});
-    CHECK_THROWS(attention(q, k, v, 3, 2, 4));             // 3 не кратне 2
-    CHECK_THROWS(attention(q, k, v, 2, 1, 5));             // форми не збігаються
+    CHECK_THROWS(attention(q, k, v, 3, 2, 4));             // 3 is not a multiple of 2
+    CHECK_THROWS(attention(q, k, v, 2, 1, 5));             // shapes do not match
     CHECK_THROWS(attention(q, k, v, 2, 1, 4, 1));          // S < pos_offset + T
     Tensor big_k({kMaxAttentionKeys + 1, 4}), big_q({1, 8});
-    CHECK_THROWS(attention(big_q, big_k, big_k, 2, 1, 4, kMaxAttentionKeys));  // забагато ключів
+    CHECK_THROWS(attention(big_q, big_k, big_k, 2, 1, 4, kMaxAttentionKeys));  // too many keys
 }
 
 // ---- rmsnorm ---------------------------------------------------------------
@@ -328,7 +328,7 @@ TEST(rmsnorm_known_value) {
     CHECK_NEAR(y[1], 4 * rstd * 2, 1e-6);
 }
 
-// D різні: менше за блок (256), не кратне warp (32), більше блоку, реальне 576.
+// Various D: below the block size (256), not a multiple of the warp (32), above a block, the real 576.
 TEST(rmsnorm_matches_cpu_for_many_shapes) {
     struct S { int T, D; };
     const S shapes[] = {{1, 1}, {1, 7}, {3, 31}, {2, 33}, {4, 256}, {5, 257}, {5, 576}, {2, 1000}};
@@ -351,13 +351,13 @@ TEST(rmsnorm_shape_errors_throw) {
     CHECK_THROWS(rmsnorm(Tensor({2, 4}), Tensor({2, 4}), 1e-5f));
 }
 
-// Рядки обробляються незалежно: зміна одного рядка не впливає на інші.
+// Rows are processed independently: changing one row does not affect the others.
 TEST(rmsnorm_rows_are_independent) {
     const int T = 4, D = 300;
     std::vector<float> x = rnd(T * D, 7, 2.f), w = rnd(D, 8);
     Tensor W = Tensor::from_host(w, {D});
     std::vector<float> a = rmsnorm(Tensor::from_host(x, {T, D}), W, 1e-5f).to_host();
-    for (int d = 0; d < D; ++d) x[2 * D + d] *= 100.f;  // міняємо лише рядок 2
+    for (int d = 0; d < D; ++d) x[2 * D + d] *= 100.f;  // change only row 2
     std::vector<float> b = rmsnorm(Tensor::from_host(x, {T, D}), W, 1e-5f).to_host();
     for (int t : {0, 1, 3})
         for (int d = 0; d < D; ++d) CHECK(a[t * D + d] == b[t * D + d]);

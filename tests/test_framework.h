@@ -1,6 +1,6 @@
 #pragma once
-// Мінімальний тестовий каркас без зовнішніх залежностей.
-//   TEST(name) { CHECK(умова); CHECK_NEAR(a, b, tol); CHECK_THROWS(вираз); }
+// A minimal test framework without external dependencies.
+//   TEST(name) { CHECK(condition); CHECK_NEAR(a, b, tol); CHECK_THROWS(expression); }
 #include <cmath>
 #include <sstream>
 #include <stdexcept>

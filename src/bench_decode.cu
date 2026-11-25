@@ -1,10 +1,10 @@
-// bench_decode.exe - швидкість prefill і декодування по одному токену.
+// bench_decode.exe - speed of prefill and of single-token decoding.
 //
 //   bench_decode.exe [--steps 64] [--no-pool] [--model model] [--ids "504 3575 282 4649 314"]
 //
-// Кожен крок декодування міряється окремо, разом з копіюванням логітів на CPU. Вибір argmax у час
-// не входить (як і в llama-bench, семплінг не міряється). Друкує медіану й середнє, а також скільки
-// пам'яті запитувалось на токен і скільки з цього були реальні cudaMalloc.
+// Each decode step is timed separately, including the copy of the logits to the CPU. Picking the argmax
+// is not timed (llama-bench does not time sampling either). Prints the median and the mean, plus how much
+// memory was requested per token and how many of those requests were real cudaMalloc calls.
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
             return std::chrono::duration<double, std::milli>(b - a).count();
         };
 
-        // Прогрів (перший запуск ядер і заповнення пулу), далі міряємо.
+        // Warm-up (first kernel launches and filling the pool), then measure.
         {
             KVCache warm(model.cfg, static_cast<int>(ids.size()) + 8);
             std::vector<float> l = model.forward_cached(ids, warm, true).to_host();
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
         }
         const GpuAllocator::Stats st = GpuAllocator::instance().stats();
         if (graph) {
-            graph->time_replays(20);  // прогрів
+            graph->time_replays(20);  // warm-up
             std::printf("graph replay only (no copies, no sync per step): %.3f ms\n", graph->time_replays(200));
         }
 

@@ -1,6 +1,6 @@
 #pragma once
-// Tensor: float-буфер на GPU з формою. RAII: пам'ять повертається в пул сама.
-// Копіювати не можна (дорого й небезпечно), тільки переміщувати.
+// Tensor: a float buffer on the GPU with a shape. RAII: the memory returns to the pool by itself.
+// No copying (expensive and error-prone), only moving.
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
@@ -12,12 +12,12 @@ class Tensor {
 public:
     Tensor() = default;
 
-    // Нульовий тензор. Для тимчасових результатів ядер краще uninitialized(): зануляти
-    // те, що ядро все одно перезапише, це зайвий запуск на кожну операцію.
+    // A zero tensor. For temporary kernel outputs prefer uninitialized(): zeroing something the
+    // kernel will overwrite anyway is an extra launch per operation.
     explicit Tensor(std::vector<int> shape) : Tensor(std::move(shape), true) {}
 
-    // Вміст не визначений (може бути сміття від попереднього тензора з пулу).
-    // Використовувати лише там, де ядро гарантовано записує кожен елемент.
+    // Contents are undefined (may be leftovers of a previous tensor from the pool).
+    // Use only where the kernel is guaranteed to write every element.
     static Tensor uninitialized(std::vector<int> shape) { return Tensor(std::move(shape), false); }
 
     static Tensor from_host(const std::vector<float>& host, std::vector<int> shape) {
@@ -91,24 +91,24 @@ private:
     std::vector<int> shape_;
 };
 
-// Формат зберігання ваг. Активації завжди fp32; ваги можуть бути стиснуті до 2 байтів,
-// а при множенні перетворюються на fp32 "на льоту" (накопичення теж у fp32).
+// Storage format of the weights. Activations are always fp32; weights may be compressed to 2 bytes
+// and are converted to fp32 on the fly during multiplication (accumulation is also in fp32).
 enum class DType { F32, F16, BF16 };
 
 inline size_t dtype_size(DType t) { return t == DType::F32 ? 4 : 2; }
 inline const char* dtype_name(DType t) { return t == DType::F32 ? "f32" : t == DType::F16 ? "f16" : "bf16"; }
 
-// Легкий опис матриці ваг [rows x cols] у пам'яті GPU, без володіння нею. Із Tensor (fp32)
-// перетворюється неявно, тож операції, що приймають WeightRef, працюють зі старими викликами
-// без змін. З LowpMatrix (fp16/bf16) теж.
+// A lightweight, non-owning description of a weight matrix [rows x cols] in GPU memory. Converts
+// implicitly from Tensor (fp32), so operations taking a WeightRef work with old call sites
+// unchanged. Also converts from LowpMatrix (fp16/bf16).
 struct WeightRef {
     const void* data = nullptr;
     DType dtype = DType::F32;
-    int ndim = 0;  // 2 для коректної матриці
+    int ndim = 0;  // 2 for a valid matrix
     int rows = 0, cols = 0;
 
     WeightRef() = default;
-    WeightRef(const Tensor& t) : data(t.data()), dtype(DType::F32), ndim(t.ndim()) {  // NOLINT: неявно навмисно
+    WeightRef(const Tensor& t) : data(t.data()), dtype(DType::F32), ndim(t.ndim()) {  // NOLINT: implicit on purpose
         if (ndim == 2) {
             rows = t.dim(0);
             cols = t.dim(1);

@@ -1,6 +1,6 @@
-// Тести ваг у fp16/bf16: конвертація, GEMV/matmul/злиті операції з такими вагами, embedding.
-// Еталон - CPU на ТИХ САМИХ округлених вагах (round_to_dtype), тож перевіряється коректність
-// ядер, а не похибка округлення (її окремо показує LowpStats і тести проти PyTorch).
+// Tests of fp16/bf16 weights: conversion, GEMV/matmul/fused ops with such weights, embedding.
+// The reference is the CPU on the SAME rounded weights (round_to_dtype), so this checks the correctness
+// of the kernels, not the rounding error (LowpStats and the PyTorch tests show that separately).
 #include <cmath>
 #include <random>
 #include "gemv.h"
@@ -30,14 +30,14 @@ LowpMatrix lowp_of(const std::vector<float>& w, int rows, int cols, DType dt, Lo
     return to_lowp(Tensor::from_host(w, {rows, cols}), dt, st);
 }
 
-// Брудний блок у пулі потрібного розміру (NaN): виявляє ядра, що не записують увесь вихід.
+// A dirty (NaN) pool block of the needed size: reveals kernels that do not write their whole output.
 void poison_pool(std::vector<int> shape) {
     size_t n = 1;
     for (int d : shape) n *= d;
     Tensor dirty = Tensor::from_host(std::vector<float>(n, std::nanf("")), shape);
 }
 
-// Повертає налаштування векторизації GEMV після тесту, навіть якщо він кинув виняток.
+// Restores the GEMV vectorization setting after a test, even if it threw.
 struct VecGuard {
     ~VecGuard() { gemv_set_vec_override(0); }
 };
@@ -49,17 +49,17 @@ std::string fail_msg(const char* what, DType dt, int M, int K, int N, double d) 
 }
 
 struct Shape { int M, K, N; };
-// M = 1..4 -> GEMV, M = 5, 9 -> резерв через reg-ядро. N: кратне 4, кратне 2, непарне.
+// M = 1..4 -> GEMV, M = 5, 9 -> fallback through the reg kernel. N: multiple of 4, of 2, and odd.
 const Shape kShapes[] = {{1, 1, 1},      {1, 7, 5},      {1, 16, 32},   {1, 33, 33},    {1, 576, 192}, {1, 576, 960},
                          {1, 1536, 576}, {2, 100, 66},   {4, 64, 64},   {3, 50, 7},     {1, 64, 4100}, {5, 576, 192},
                          {9, 33, 70},    {70, 40, 130}};
 
 }  // namespace
 
-// ---- конвертація -----------------------------------------------------------
+// ---- conversion -------------------------------------------------------------
 
 TEST(lowp_conversion_matches_host_rounding) {
-    // Звичайні, межові й особливі значення: нулі, найбільше fp16, субнормальні, дуже малі, великі.
+    // Regular, boundary and special values: zeros, largest fp16, subnormals, very small, large.
     std::vector<float> v = rnd(5000, 1, 3.f);
     const float edge[] = {0.f, -0.f, 1.f, -1.f, 65504.f, -65504.f, 6.1e-5f, 5.96e-8f, 1e-9f, 1e-30f, 1e30f,
                           3.14159265f, 1.0f + 1.0f / 2048.f, 1.0f + 1.0f / 256.f, 0.1f, 123456.f};
@@ -69,7 +69,7 @@ TEST(lowp_conversion_matches_host_rounding) {
         std::vector<float> got = from_lowp(lowp_of(v, 1, n, dt)).to_host();
         for (int i = 0; i < n; ++i) {
             const float want = round_to_dtype(v[i], dt);
-            // inf == inf у IEEE, тож порівняння працює й для переповнення
+            // inf == inf in IEEE, so the comparison also works for overflow
             if (!(got[i] == want)) {
                 std::ostringstream os;
                 os << dtype_name(dt) << ": x=" << v[i] << " got " << got[i] << " want " << want;
@@ -82,13 +82,13 @@ TEST(lowp_conversion_matches_host_rounding) {
 TEST(lowp_known_roundings) {
     Tensor x = Tensor::from_host({3.14159265f, 65504.f, 70000.f, 1.0f + 1.0f / 2048.f}, {1, 4});
     std::vector<float> h = from_lowp(to_lowp(x, DType::F16)).to_host();
-    CHECK(h[0] == 3.140625f);        // 11 значущих біт
-    CHECK(h[1] == 65504.f);          // найбільше скінченне fp16, точно
-    CHECK(std::isinf(h[2]));         // поза діапазоном
-    CHECK(h[3] == 1.0f);             // рівно посередині між 1 і 1+2^-10: округлення до парного
+    CHECK(h[0] == 3.140625f);        // 11 significant bits
+    CHECK(h[1] == 65504.f);          // largest finite fp16, exact
+    CHECK(std::isinf(h[2]));         // out of range
+    CHECK(h[3] == 1.0f);             // exactly halfway between 1 and 1+2^-10: round to even
     std::vector<float> b = from_lowp(to_lowp(x, DType::BF16)).to_host();
-    CHECK(b[0] == 3.140625f);        // 8 значущих біт
-    CHECK(b[2] == 70144.f);          // 70000 у bf16 скінченне (діапазон як у fp32), крок 512 -> 137*512
+    CHECK(b[0] == 3.140625f);        // 8 significant bits
+    CHECK(b[2] == 70144.f);          // 70000 is finite in bf16 (same range as fp32), step 512 -> 137*512
     CHECK(b[3] == 1.0f);
 }
 
@@ -98,16 +98,16 @@ TEST(lowp_stats_count_overflow_flush_and_error) {
     to_lowp(x, DType::F16, &s16);
     to_lowp(x, DType::BF16, &sbf);
     CHECK(s16.elements == 6);
-    CHECK(s16.overflow == 2);   // обидва 70000 -> inf
-    CHECK(s16.flushed == 1);    // 1e-9 -> 0 (менше найменшого субнормального fp16)
-    CHECK(s16.max_rel_error >= 1.0 - 1e-6);  // зануління = 100% похибки
-    CHECK(sbf.overflow == 0);   // bf16 має діапазон fp32
+    CHECK(s16.overflow == 2);   // both 70000 -> inf
+    CHECK(s16.flushed == 1);    // 1e-9 -> 0 (below the smallest subnormal fp16)
+    CHECK(s16.max_rel_error >= 1.0 - 1e-6);  // flushing to zero = 100% error
+    CHECK(sbf.overflow == 0);   // bf16 has the range of fp32
     CHECK(sbf.flushed == 0);
-    CHECK(sbf.max_rel_error < 0.01);  // 7 біт мантиси: до ~0.4% (2^-8)
+    CHECK(sbf.max_rel_error < 0.01);  // 7 mantissa bits: up to ~0.4% (2^-8)
 }
 
 TEST(lowp_stats_are_zero_for_exactly_representable_values) {
-    // значення вже округлені до bf16, тож перетворення без втрат
+    // the values are already rounded to bf16, so the conversion is lossless
     std::vector<float> v = rounded(rnd(2000, 4), DType::BF16);
     LowpStats s;
     lowp_of(v, 1, 2000, DType::BF16, &s);
@@ -128,22 +128,22 @@ TEST(lowp_matrix_basics) {
     WeightRef r = m;
     CHECK(r.rows == 3 && r.cols == 5 && r.dtype == DType::BF16 && r.data == m.data());
     LowpMatrix moved = std::move(m);
-    CHECK(moved.data() != nullptr && m.data() == nullptr);  // NOLINT: після переміщення порожній
+    CHECK(moved.data() != nullptr && m.data() == nullptr);  // NOLINT: empty after the move
     CHECK_THROWS(LowpMatrix({2, 2}, DType::F32));
     CHECK_THROWS(LowpMatrix({2, 2, 2}, DType::F16));
-    CHECK_THROWS(to_lowp(Tensor({4}), DType::F16));         // не 2D
+    CHECK_THROWS(to_lowp(Tensor({4}), DType::F16));         // not 2D
     CHECK_THROWS(to_lowp(Tensor({2, 2}), DType::F32));
-    CHECK(to_lowp(Tensor({0, 3}), DType::F16).numel() == 0);  // порожня матриця коректна
+    CHECK(to_lowp(Tensor({0, 3}), DType::F16).numel() == 0);  // an empty matrix is valid
 }
 
-// ---- GEMV і злиті операції з 16-бітними вагами ----------------------------------
+// ---- GEMV and fused ops with 16-bit weights ---------------------------------
 
 TEST(lowp_matmul_matches_cpu_on_rounded_weights) {
     for (DType dt : kLowp)
         for (const Shape& s : kShapes) {
             std::vector<float> a = rnd(static_cast<size_t>(s.M) * s.K, 11 + s.K), w = rnd(static_cast<size_t>(s.K) * s.N, 12 + s.N);
             poison_pool({s.M, s.N});
-            Tensor out = matmul(Tensor::from_host(a, {s.M, s.K}), lowp_of(w, s.K, s.N, dt));  // Auto: GEMV або Reg
+            Tensor out = matmul(Tensor::from_host(a, {s.M, s.K}), lowp_of(w, s.K, s.N, dt));  // Auto: GEMV or Reg
             const double d = max_abs_diff(out.to_host(), cpu_matmul(a, rounded(w, dt), s.M, s.N, s.K));
             if (d > 2e-3) throw TestFailure(fail_msg("matmul", dt, s.M, s.K, s.N, d));
         }
@@ -195,8 +195,8 @@ TEST(lowp_rmsnorm_gate_up_matches_cpu) {
         }
 }
 
-// Ширина векторизації не змінює результат (навіть побітово): кожен стовпець накопичує ті самі k
-// у тому самому порядку. Це перевіряє, що векторизовані завантаження читають правильні елементи.
+// The vectorization width does not change the result (not even bitwise): each column accumulates the same k
+// in the same order. This checks that the vectorized loads read the right elements.
 TEST(gemv_vector_widths_give_bitwise_identical_results) {
     VecGuard guard;
     const Shape shapes[] = {{1, 576, 960}, {2, 100, 68}, {1, 33, 4100}, {3, 64, 66}, {1, 50, 7}};
@@ -219,7 +219,7 @@ TEST(gemv_vector_widths_give_bitwise_identical_results) {
                 if (vec == 1) { base_a = a; base_b = b; base_c = c; continue; }
                 if (a != base_a || b != base_b || c != base_c) {
                     std::ostringstream os;
-                    os << dtype_name(dt) << " M=" << s.M << " K=" << s.K << " N=" << s.N << ": VEC=" << vec << " дає інший результат, ніж VEC=1";
+                    os << dtype_name(dt) << " M=" << s.M << " K=" << s.K << " N=" << s.N << ": VEC=" << vec << " differs from VEC=1";
                     throw TestFailure(os.str());
                 }
             }
@@ -232,7 +232,7 @@ TEST(gemv_vec_override_is_validated) {
     CHECK_THROWS(gemv_set_vec_override(8));
     gemv_set_vec_override(2);
     CHECK(gemv_choose_vec(66, DType::F16) == 2);
-    CHECK(gemv_choose_vec(7, DType::F16) == 1);   // непарне N: безпечний відкат до скалярного шляху
+    CHECK(gemv_choose_vec(7, DType::F16) == 1);   // odd N: safe fallback to the scalar path
     gemv_set_vec_override(4);
     CHECK(gemv_choose_vec(66, DType::F16) == 2);  // 66 % 4 != 0 -> 2
     CHECK(gemv_choose_vec(64, DType::F16) == 4);
@@ -255,15 +255,15 @@ TEST(lowp_embedding_returns_rounded_rows) {
     }
 }
 
-// ---- перевірки аргументів ------------------------------------------------------
+// ---- argument checks --------------------------------------------------------
 
 TEST(lowp_ops_validate_dtypes_and_kernels) {
     Tensor x({1, 8}), nw({8});
     LowpMatrix f16({8, 4}, DType::F16), bf({8, 4}, DType::BF16);
-    CHECK_THROWS(rmsnorm_gate_up(x, nw, 1e-5f, f16, bf));                 // різні формати Wg і Wu
-    CHECK_THROWS(matmul(x, f16, MatmulKind::Naive));                     // навчальні ядра лише fp32
+    CHECK_THROWS(rmsnorm_gate_up(x, nw, 1e-5f, f16, bf));                 // Wg and Wu in different formats
+    CHECK_THROWS(matmul(x, f16, MatmulKind::Naive));                     // teaching kernels are fp32 only
     CHECK_THROWS(matmul(x, f16, MatmulKind::Tiled));
-    CHECK_THROWS(rmsnorm_matmul(Tensor({1, 7}), Tensor({7}), 1e-5f, f16));  // K не збігається з вагами
-    (void)matmul(x, f16, MatmulKind::Reg);                               // Reg і Gemv працюють
+    CHECK_THROWS(rmsnorm_matmul(Tensor({1, 7}), Tensor({7}), 1e-5f, f16));  // K does not match the weights
+    (void)matmul(x, f16, MatmulKind::Reg);                               // Reg and Gemv work
     (void)matmul(x, f16, MatmulKind::Gemv);
 }

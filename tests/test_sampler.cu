@@ -1,5 +1,5 @@
-// Тести семплера: лише CPU, без GPU. Статистичні перевірки мають жорсткі допуски на
-// достатньо великій вибірці й фіксоване зерно, тож не флейкують.
+// Sampler tests: CPU only, no GPU. The statistical checks use tight tolerances on a large enough
+// sample with a fixed seed, so they are not flaky.
 #include <map>
 #include "sampler.h"
 #include "test_framework.h"
@@ -62,10 +62,10 @@ TEST(sampler_top_k_restricts_candidates) {
     Sampler s(cfg(1.f, 3));
     auto h = histogram(s, {5.f, 4.f, 3.f, 2.f, 1.f, 0.f}, 3000);
     for (auto& [tok, n] : h) CHECK(tok <= 2);
-    CHECK(h.size() == 3);  // всі три кандидати справді трапляються
+    CHECK(h.size() == 3);  // all three candidates really occur
 }
 
-// Частоти мають збігатися з softmax: logits {0,1,2}, T=1.
+// Frequencies must match softmax: logits {0,1,2}, T=1.
 TEST(sampler_frequencies_match_softmax) {
     const std::vector<float> logits = {0.f, 1.f, 2.f};
     double z = 1 + std::exp(1.0) + std::exp(2.0);
@@ -82,12 +82,12 @@ TEST(sampler_temperature_sharpens_and_flattens) {
     Sampler cold(cfg(0.1f)), hot(cfg(10.f));
     double p_cold = static_cast<double>(histogram(cold, logits, N)[2]) / N;
     double p_hot = static_cast<double>(histogram(hot, logits, N)[2]) / N;
-    CHECK(p_cold > 0.99);              // майже завжди найкращий
-    CHECK(p_hot > 0.3 && p_hot < 0.45);  // майже рівномірно (1/3 + невеликий перекіс)
+    CHECK(p_cold > 0.99);              // almost always the best one
+    CHECK(p_hot > 0.3 && p_hot < 0.45);  // almost uniform (1/3 + a slight skew)
 }
 
-// Розподіл {0.5, 0.3, 0.15, 0.05}, top_p = 0.7: накопичено 0.5 < 0.7, з другим 0.8 >= 0.7,
-// тож залишаються лише токени 0 і 1 у пропорції 0.5 : 0.3.
+// Distribution {0.5, 0.3, 0.15, 0.05}, top_p = 0.7: the sum 0.5 < 0.7, with the second 0.8 >= 0.7,
+// so only tokens 0 and 1 remain, in the ratio 0.5 : 0.3.
 TEST(sampler_top_p_keeps_smallest_nucleus) {
     const std::vector<float> logits = {std::log(0.5f), std::log(0.3f), std::log(0.15f), std::log(0.05f)};
     const int N = 20000;
@@ -122,8 +122,8 @@ TEST(sampler_is_deterministic_for_same_seed) {
     CHECK(sa != sc);
 }
 
-// exp(1000) переповнюється, тож без віднімання максимуму вийшов би NaN. Розподіл має бути
-// таким самим, як для логітів {0, 1, -1}: softmax = {0.245, 0.665, 0.090}.
+// exp(1000) overflows, so without subtracting the maximum we would get NaN. The distribution must be
+// the same as for logits {0, 1, -1}: softmax = {0.245, 0.665, 0.090}.
 TEST(sampler_large_logits_give_correct_distribution) {
     const int N = 40000;
     Sampler s(cfg(1.f));

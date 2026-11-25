@@ -1,8 +1,8 @@
 #pragma once
-// Читання тензорів, які записав tools/export_reference.py:
-//   <base>.manifest.txt  - рядки "ім'я dtype ndim d0 d1 ... зсув"
-//   <base>.bin           - сирі дані
-// Тензор читається з диска лише коли його просять (ваги займають сотні МБ).
+// Reads the tensors written by tools/export_reference.py:
+//   <base>.manifest.txt  - lines of "name dtype ndim d0 d1 ... offset"
+//   <base>.bin           - raw data
+// A tensor is read from disk only when requested (the weights take hundreds of MB).
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -15,7 +15,7 @@
 class TensorFile {
 public:
     struct Entry {
-        std::string dtype;  // "float32" або "int32"
+        std::string dtype;  // "float32" or "int32"
         std::vector<int> shape;
         uint64_t offset = 0;
         size_t numel() const {

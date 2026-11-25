@@ -1,6 +1,6 @@
 #pragma once
-// Вибір наступного токена з логітів (CPU). Працює на копії одного рядка логітів: ~50 тис.
-// чисел, це мізерно порівняно з прогоном моделі.
+// Picking the next token from the logits (CPU). Works on a copy of one row of logits: ~50k
+// numbers, negligible compared with a model forward pass.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -11,9 +11,9 @@
 #include <vector>
 
 struct SamplerConfig {
-    float temperature = 0.f;  // 0 = greedy (завжди найімовірніший токен)
-    int top_k = 0;            // 0 = вимкнено; інакше лише k найімовірніших
-    float top_p = 1.f;        // ядро: найменша множина з сумарною ймовірністю >= top_p
+    float temperature = 0.f;  // 0 = greedy (always the most likely token)
+    int top_k = 0;            // 0 = off; otherwise keep only the k most likely
+    float top_p = 1.f;        // nucleus: the smallest set with total probability >= top_p
     unsigned seed = 0;
 };
 
@@ -34,7 +34,7 @@ public:
 
         if (cfg_.temperature == 0.f) return argmax(logits);
 
-        // Кандидати, від найбільшого логіта (стабільно: при рівності раніший індекс).
+        // Candidates, starting from the largest logit (stable: on ties the earlier index comes first).
         std::vector<int> idx(logits.size());
         std::iota(idx.begin(), idx.end(), 0);
         auto better = [&](int a, int b) { return logits[a] > logits[b] || (logits[a] == logits[b] && a < b); };
@@ -47,7 +47,7 @@ public:
             std::sort(idx.begin(), idx.end(), better);
         }
 
-        // Softmax з температурою; віднімаємо максимум для стійкості. -inf дає ймовірність 0.
+        // Softmax with temperature; subtract the maximum for stability. -inf gives probability 0.
         const double mx = logits[idx[0]];
         if (std::isinf(mx) && mx < 0) throw std::runtime_error("Sampler: all logits are -inf");
         std::vector<double> p(idx.size());
@@ -58,7 +58,7 @@ public:
         }
         for (double& v : p) v /= sum;
 
-        // top-p: залишаємо найменший префікс із сумою >= top_p (мінімум один токен).
+        // top-p: keep the smallest prefix with sum >= top_p (at least one token).
         if (cfg_.top_p < 1.f) {
             double cum = 0;
             size_t n = 0;
@@ -79,13 +79,13 @@ public:
             acc += p[i];
             if (u < acc) return idx[i];
         }
-        return idx.back();  // похибка округлення: u майже 1
+        return idx.back();  // rounding error: u is almost 1
     }
 
     static int argmax(const std::vector<float>& logits) {
         int best = 0;
         for (size_t i = 1; i < logits.size(); ++i)
-            if (logits[i] > logits[best]) best = static_cast<int>(i);  // при рівності лишається менший індекс
+            if (logits[i] > logits[best]) best = static_cast<int>(i);  // on ties the smaller index stays
         return best;
     }
 

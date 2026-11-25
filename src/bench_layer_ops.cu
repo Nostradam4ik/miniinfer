@@ -1,10 +1,10 @@
-// bench_layer_ops.exe - скільки коштує кожна злита операція шару в реальних формах (M = 1).
+// bench_layer_ops.exe - the cost of each fused layer operation at real model shapes (M = 1).
 //
 //   bench_layer_ops.exe [--dtype f32|f16|bf16]
 //
-// Кожна операція запускається 300 разів підряд (разом із виділенням виходу з пулу, як у моделі) і
-// міряється подією CUDA. Результат порівнюється з вартістю порожнього ядра (нижня межа запуску):
-// якщо операція коштує ~стільки ж, вона обмежена запуском, а не роботою.
+// Each operation runs 300 times in a row (including taking the output from the pool, as in the model) and
+// is timed with a CUDA event. The result is compared with the cost of an empty kernel (the launch floor):
+// if an operation costs about the same, it is bound by the launch, not by its work.
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -24,13 +24,13 @@ static double time_us(F&& f, int iters = 300) {
     return t.stop() * 1000.0 / iters;
 }
 
-// Те саме, але `reps` викликів операції захоплюються в CUDA-граф і запускаються однією командою:
-// це реальний час роботи на GPU без вартості запуску кожного ядра хостом.
+// Same, but `reps` calls of the operation are captured into a CUDA graph and launched with one command:
+// this is the real GPU execution time without the host cost of launching every kernel.
 template <typename F>
 static double time_graph_us(F&& f, int reps = 100) {
-    f();  // прогрів (завантаження ядер)
+    f();  // warm-up (kernel loading)
     CUDA_CHECK(cudaDeviceSynchronize());
-    GpuArena arena(192u << 20);  // кожен виклик видає свій вихід, тож місця треба з запасом
+    GpuArena arena(192u << 20);  // every call produces its own output, so leave plenty of room
     cudaStream_t s;
     CUDA_CHECK(cudaStreamCreate(&s));
     cudaGraph_t graph = nullptr;
@@ -43,7 +43,7 @@ static double time_graph_us(F&& f, int reps = 100) {
         CUDA_CHECK(cudaStreamEndCapture(s, &graph));
     }
     CUDA_CHECK(cudaGraphInstantiate(&exec, graph, 0));
-    CUDA_CHECK(cudaGraphLaunch(exec, s));  // прогрів
+    CUDA_CHECK(cudaGraphLaunch(exec, s));  // warm-up
     CUDA_CHECK(cudaStreamSynchronize(s));
     const int launches = 20;
     auto t0 = std::chrono::steady_clock::now();
@@ -59,7 +59,7 @@ static double time_graph_us(F&& f, int reps = 100) {
 
 int main(int argc, char** argv) {
     DType dt = DType::F32;
-    bool use_graph = false;  // --graph: час кожної операції всередині CUDA-графа (без вартості запуску)
+    bool use_graph = false;  // --graph: time of each operation inside a CUDA graph (without launch cost)
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--graph") use_graph = true;
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
     int* d_id = nullptr;
     CUDA_CHECK(cudaMalloc(&d_id, sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_id, ids.data(), sizeof(int), cudaMemcpyHostToDevice));
-    if (use_graph)  // варіант із id на пристрої: його можна захопити в граф
+    if (use_graph)  // variant with the ids on the device: it can be captured into a graph
         rows.push_back({"embedding (1 token, device id)", meas([&] { Tensor o = embedding_dev(table_ref, d_id, 1); }), 1});
     else
         rows.push_back({"embedding (1 token, incl. sync)", time_us([&] { Tensor o = embedding(table_ref, ids); }, 100), 1});

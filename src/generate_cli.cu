@@ -1,9 +1,9 @@
-// generate.exe - генерація з командного рядка. Приймає id токенів (токенізація - у tools/chat.py).
+// generate.exe - command-line generation. Takes token ids (tokenization is in tools/chat.py).
 //
 //   generate.exe --ids "504 3575 282 4649 314" --max 30 --temp 0.8 --top-p 0.95 --seed 1
 //
-// stdout: по рядку "tok <id>" на кожен новий токен (з flush, для стрімінгу).
-// stderr: службова інформація (час, швидкість) і помилки. Код виходу 0 при успіху.
+// stdout: one "tok <id>" line per new token (flushed, for streaming).
+// stderr: diagnostics (time, speed) and errors. Exit code 0 on success.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

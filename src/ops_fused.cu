@@ -1,6 +1,6 @@
-// Злиті операції: кілька кроків моделі в одному запуску ядра.
-// Навіщо: при декодуванні по одному токену ядра короткі (кілька мікросекунд), і вартість самого
-// запуску (~7 мкс) порівнянна з роботою. Менше запусків = менше простою GPU.
+// Fused operations: several model steps in one kernel launch.
+// Why: in single-token decoding the kernels are short (a few microseconds) and the cost of a launch
+// (~7 us) is comparable to the work. Fewer launches = less GPU idle time.
 #include <stdexcept>
 #include <string>
 #include "gemv.h"
@@ -51,10 +51,10 @@ Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightR
     return out;
 }
 
-// RoPE для Q і K та запис K і V у кеш, усе одним запуском. Простір індексів:
-// [Q-пари | K-пари | V-елементи]; кожен потік обробляє один елемент свого розділу.
-// Позиція першого токена - з pos_ptr (пам'ять пристрою, для CUDA-графа), якщо він не nullptr, інакше pos_offset.
-// Рядки кешу з номером поза [0, cache_rows) не пишуться (захист при позиції з пристрою).
+// RoPE for Q and K plus the write of K and V to the cache, all in one launch. The index space is
+// [Q pairs | K pairs | V elements]; each thread handles one element of its section.
+// The position of the first token comes from pos_ptr (device memory, for the CUDA graph) if not nullptr,
+// otherwise from pos_offset. Cache rows outside [0, cache_rows) are not written (guards a device position).
 __global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck, float* cv, int T, int H,
                                       int KV, int hd, float theta, int pos_offset, const int* pos_ptr,
                                       int cache_rows) {
@@ -78,7 +78,7 @@ __global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck,
         const int h = static_cast<int>(ht % heads);
         const int t = static_cast<int>(ht / heads);
 
-        if (!is_q && (pos0 < 0 || pos0 + t >= cache_rows)) return;  // рядок кешу поза межами: не пишемо
+        if (!is_q && (pos0 < 0 || pos0 + t >= cache_rows)) return;  // cache row out of range: do not write
 
         const float* src = qkv + t * row_stride + (is_q ? 0 : static_cast<size_t>(H) * hd) + static_cast<size_t>(h) * hd;
         float* dst = is_q ? q_out + (static_cast<size_t>(t) * H + h) * hd
@@ -101,7 +101,7 @@ __global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck,
 void launch_rope_qkv_cache(const float* qkv, float* q_out, float* cache_k, float* cache_v, int T, int num_heads,
                            int num_kv_heads, int head_dim, float theta, int pos_offset, const int* d_pos,
                            int cache_rows) {
-    // Q-пар + K-пар + V-елементів
+    // Q pairs + K pairs + V elements
     const long long items =
         static_cast<long long>(T) * ((num_heads + num_kv_heads) * (head_dim / 2) + num_kv_heads * head_dim);
     if (items <= 0) return;
@@ -124,7 +124,7 @@ Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int
         cache_k.dim(0) != cache_v.dim(0))
         throw std::invalid_argument("rope_qkv_to_cache: cache shape mismatch");
     const int T = qkv.dim(0);
-    if (!d_pos && static_cast<long long>(pos_offset) + T > cache_k.dim(0))  // з d_pos хост позиції не знає
+    if (!d_pos && static_cast<long long>(pos_offset) + T > cache_k.dim(0))  // with d_pos the host does not know the position
         throw std::invalid_argument("rope_qkv_to_cache: rows exceed cache size");
 
     Tensor q = Tensor::uninitialized({T, num_heads * head_dim});

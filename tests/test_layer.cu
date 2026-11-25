@@ -1,4 +1,4 @@
-// Властивості шару декодера, що не потребують еталонних ваг: на випадкових малих вагах.
+// Properties of a decoder layer that need no reference weights: on small random weights.
 #include <random>
 #include "model.cuh"
 #include "ops_cpu.h"
@@ -49,18 +49,18 @@ LayerWeights random_weights(const ModelConfig& c, unsigned seed) {
 
 }  // namespace
 
-// Якщо o_proj і down_proj нульові, обидві гілки дають 0, і шар = тотожність (residual).
+// If o_proj and down_proj are zero, both branches give 0 and the layer is the identity (residual).
 TEST(layer_with_zero_output_projections_is_identity) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 1);
-    w.wo = Tensor({c.num_heads * c.head_dim, c.hidden_size});  // нулі
+    w.wo = Tensor({c.num_heads * c.head_dim, c.hidden_size});  // zeros
     w.w_down = Tensor({c.intermediate_size, c.hidden_size});
     std::vector<float> x = rnd_tensor({6, c.hidden_size}, 99, 2.f).to_host();
     std::vector<float> out = decoder_layer(Tensor::from_host(x, {6, c.hidden_size}), w, c).to_host();
     CHECK_NEAR(max_abs_diff(out, x), 0.0, 0.0);
 }
 
-// Лише MLP-гілка: якщо wo = 0, то out = x + mlp(rmsnorm(x)).
+// MLP branch only: if wo = 0, then out = x + mlp(rmsnorm(x)).
 TEST(layer_mlp_branch_is_residual_plus_mlp) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 2);
@@ -71,7 +71,7 @@ TEST(layer_mlp_branch_is_residual_plus_mlp) {
     CHECK_NEAR(max_abs_diff(decoder_layer(x, w, c).to_host(), expect.to_host()), 0.0, 0.0);
 }
 
-// Причинність на рівні всього шару: зміна токенів ПІСЛЯ t не змінює виходу в позиціях <= t.
+// Causality of the whole layer: changing tokens AFTER t does not change the output at positions <= t.
 TEST(layer_is_causal) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 3);
@@ -83,12 +83,12 @@ TEST(layer_is_causal) {
     std::vector<float> b = decoder_layer(Tensor::from_host(x, {T, H}), w, c).to_host();
     for (int t = 0; t < cut; ++t)
         for (int d = 0; d < H; ++d) CHECK(a[t * H + d] == b[t * H + d]);
-    // а позиції після cut справді змінилися
+    // while the positions after cut really did change
     CHECK(max_abs_diff(std::vector<float>(a.begin() + cut * H, a.end()),
                        std::vector<float>(b.begin() + cut * H, b.end())) > 1e-3);
 }
 
-// Шар бачить позицію лише через RoPE: перестановка токенів має змінити результат.
+// The layer only sees the position through RoPE: permuting the tokens must change the result.
 TEST(layer_depends_on_token_order) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 4);
@@ -97,7 +97,7 @@ TEST(layer_depends_on_token_order) {
     for (int d = 0; d < H; ++d) std::swap(y[0 * H + d], y[1 * H + d]);
     std::vector<float> a = decoder_layer(Tensor::from_host(x, {4, H}), w, c).to_host();
     std::vector<float> b = decoder_layer(Tensor::from_host(y, {4, H}), w, c).to_host();
-    // останній токен бачить ті самі токени, але в іншому порядку, тож вихід має відрізнятись
+    // the last token sees the same tokens in a different order, so the output must differ
     CHECK(max_abs_diff(std::vector<float>(a.end() - H, a.end()),
                        std::vector<float>(b.end() - H, b.end())) > 1e-4);
 }
@@ -110,9 +110,9 @@ TEST(layer_output_shape_and_finite) {
     for (float v : out.to_host()) CHECK(std::isfinite(v));
 }
 
-// ---- KV-кеш ----------------------------------------------------------------
+// ---- KV cache ---------------------------------------------------------------
 
-// Кешований шар по одному токену дає ті самі рядки, що й шар на всій послідовності.
+// A cached layer fed one token at a time gives the same rows as the layer on the whole sequence.
 TEST(cached_layer_token_by_token_matches_full) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 21);
@@ -128,13 +128,13 @@ TEST(cached_layer_token_by_token_matches_full) {
         std::vector<float> want(full.begin() + t * H, full.begin() + (t + 1) * H);
         if (max_abs_diff(out, want) > 1e-5) {
             std::ostringstream os;
-            os << "токен " << t << ": різниця " << max_abs_diff(out, want);
+            os << "token " << t << ": difference " << max_abs_diff(out, want);
             throw TestFailure(os.str());
         }
     }
 }
 
-// Шматками різного розміру (prefill 3, потім 2, потім 4) - так само, як цілою послідовністю.
+// Chunks of different sizes (prefill 3, then 2, then 4) behave the same as the whole sequence.
 TEST(cached_layer_chunked_matches_full) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 22);
@@ -155,7 +155,7 @@ TEST(cached_layer_chunked_matches_full) {
     }
 }
 
-// Старі записи в кеші, до яких запит має доступ, не псуються новими токенами.
+// Old cache entries visible to a query are not corrupted by new tokens.
 TEST(cache_keeps_earlier_entries_intact) {
     ModelConfig c = small_config();
     LayerWeights w = random_weights(c, 23);

@@ -2,8 +2,8 @@
 #include <cstring>
 #include "test_framework.h"
 
-// Запуск: tests.exe            - усі тести
-//         tests.exe <частина імені> - лише тести, у назві яких є ця частина
+// Usage: tests.exe               - all tests
+//        tests.exe <name part>   - only tests whose name contains this part
 int main(int argc, char** argv) {
     const char* filter = argc > 1 ? argv[1] : nullptr;
     int passed = 0, failed = 0;

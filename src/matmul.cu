@@ -1,6 +1,6 @@
-// Бенчмарк множення матриць: naive / tiled / reg / cuBLAS.
-// Запуск: matmul.exe [N]   (N x N, за замовчуванням 512)
-// Ядра лежать у ops.cu і перевіряються тестами (tests/).
+// Matrix multiplication benchmark: naive / tiled / reg / cuBLAS.
+// Usage: matmul.exe [N]   (N x N, default 512)
+// The kernels live in ops.cu and are checked by the tests (tests/).
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -9,8 +9,8 @@
 #include "ops.cuh"
 #include "ops_cpu.h"
 
-// cuBLAS працює в column-major, тому міняємо A і B місцями:
-// (A*B)^T = B^T * A^T, і row-major C виходить без транспонування.
+// cuBLAS works in column-major order, so swap A and B:
+// (A*B)^T = B^T * A^T, and the row-major C comes out without any transpose.
 static void cublas_matmul(cublasHandle_t h, const float* A, const float* B, float* C,
                           int n) {
     const float alpha = 1.f, beta = 0.f;
@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     const double flops = 2.0 * n * n * n;
     GpuTimer timer;
 
-    // Прогрів + середнє за 20 запусків, потім звірка з CPU-еталоном.
+    // Warm-up + mean over 20 runs, then a check against the CPU reference.
     auto bench = [&](const char* name, auto&& launch) {
         launch();
         CUDA_CHECK(cudaDeviceSynchronize());
@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
         float ms = timer.stop() / iters;
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaMemcpy(out.data(), dC, bytes, cudaMemcpyDeviceToHost));
-        std::printf("%-7s: %8.3f мс  %8.1f GFLOPS  max_diff=%.2e\n", name, ms,
+        std::printf("%-7s: %8.3f ms  %8.1f GFLOPS  max_diff=%.2e\n", name, ms,
                     flops / (ms * 1e-3) / 1e9, max_abs_diff(out, ref));
     };
 

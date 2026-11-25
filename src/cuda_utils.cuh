@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 
-// Без цієї перевірки помилки CUDA мовчать.
+// Without this check CUDA errors are silent.
 #define CUDA_CHECK(call)                                                     \
     do {                                                                     \
         cudaError_t err__ = (call);                                          \
@@ -14,16 +14,16 @@
         }                                                                    \
     } while (0)
 
-// Потік CUDA, у який бібліотека ставить запуски ядер. За замовчуванням 0 (стандартний потік);
-// під час захоплення CUDA-графа DecodeGraph тимчасово підміняє його потоком захоплення.
-// Окремий для кожного потоку виконання (thread_local), тож паралельні виклики не заважають.
+// The CUDA stream the library submits kernel launches to. Defaults to 0 (the default stream);
+// while a CUDA graph is being captured, DecodeGraph temporarily replaces it with the capture stream.
+// One per host thread (thread_local), so parallel callers do not interfere.
 inline cudaStream_t& exec_stream_ref() {
     static thread_local cudaStream_t s = 0;
     return s;
 }
 inline cudaStream_t exec_stream() { return exec_stream_ref(); }
 
-// Тимчасово робить s потоком виконання (повертає попередній у деструкторі, навіть при винятку).
+// Temporarily makes s the execution stream (the destructor restores the previous one, even on exceptions).
 class ScopedStream {
 public:
     explicit ScopedStream(cudaStream_t s) : prev_(exec_stream_ref()) { exec_stream_ref() = s; }
@@ -35,7 +35,7 @@ private:
     cudaStream_t prev_;
 };
 
-// Вимірювання часу ядра через cudaEvent (у мілісекундах).
+// Kernel timing with cudaEvent (in milliseconds).
 class GpuTimer {
 public:
     GpuTimer() {

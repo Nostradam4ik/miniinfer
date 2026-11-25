@@ -6,11 +6,11 @@
 #include <string>
 
 // ---------------------------------------------------------------------------
-// Усі три ядра працюють для довільних M, N, K (не лише квадратних).
+// All three kernels work for arbitrary M, N, K (not only square matrices).
 // A[M x K], B[K x N], C[M x N], row-major.
 // ---------------------------------------------------------------------------
 
-// Наївна версія: один потік = один елемент C.
+// Naive version: one thread = one element of C.
 __global__ void matmul_naive_kernel(const float* A, const float* B, float* C, int M,
                                     int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -22,7 +22,7 @@ __global__ void matmul_naive_kernel(const float* A, const float* B, float* C, in
     }
 }
 
-// Tiled: плитки 16x16 у shared memory.
+// Tiled: 16x16 tiles in shared memory.
 #define TILE 16
 __global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, int M,
                                     int N, int K) {
@@ -46,13 +46,13 @@ __global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, in
     if (row < M && col < N) C[row * N + col] = s;
 }
 
-// Реєстровий tiling: плитка C 64x64 на блок, 4x4 елементи на потік.
+// Register tiling: a 64x64 tile of C per block, 4x4 elements per thread.
 #define BM 64
 #define BK 16
 #define TM 4
 #define TN 4
-// B може бути fp32, fp16 або bf16: елемент перетворюється на float під час завантаження плитки
-// в shared memory, далі обчислення в fp32. Це дає prefill із 16-бітними вагами без копії в fp32.
+// B may be fp32, fp16 or bf16: each element is converted to float while the tile is loaded
+// into shared memory, and the computation is in fp32. This gives prefill with 16-bit weights without an fp32 copy.
 template <typename WT>
 __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M,
                                   int N, int K) {
@@ -98,12 +98,12 @@ __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M,
         }
 }
 
-// B може бути в будь-якому з форматів ваг. Naive і Tiled працюють лише з fp32 (навчальні версії);
-// Reg і Gemv - з усіма.
+// B may be in any of the weight formats. Naive and Tiled work only with fp32 (teaching versions);
+// Reg and Gemv work with all of them.
 static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DType dt, float* C, int M,
                               int N, int K) {
     if (M <= 0 || N <= 0) return;
-    if (K <= 0) {  // порожня сума: результат - нулі
+    if (K <= 0) {  // empty sum: the result is zeros
         CUDA_CHECK(cudaMemset(C, 0, static_cast<size_t>(M) * N * sizeof(float)));
         return;
     }
@@ -138,7 +138,7 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
         }
         case MatmulKind::Gemv:
         case MatmulKind::Auto:
-            break;  // уже оброблено вище
+            break;  // already handled above
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -156,13 +156,13 @@ Tensor matmul(const Tensor& A, WeightRef B, MatmulKind kind) {
                                     std::to_string(A.dim(1)) + " vs " +
                                     std::to_string(B.rows) + ")");
     int M = A.dim(0), K = A.dim(1), N = B.cols;
-    Tensor C = Tensor::uninitialized({M, N});  // запис усіх елементів (або нулів при K=0) робить launch_matmul_raw
+    Tensor C = Tensor::uninitialized({M, N});  // launch_matmul_raw writes every element (or zeros when K=0)
     launch_matmul_raw(kind, A.data(), B.data, B.dtype, C.data(), M, N, K);
     return C;
 }
 
 // ---------------------------------------------------------------------------
-// Embedding: один блок = один токен.
+// Embedding: one block = one token.
 // ---------------------------------------------------------------------------
 template <typename WT>
 __global__ void embedding_kernel(const WT* table, const int* ids, float* out, int D) {
@@ -191,14 +191,14 @@ Tensor embedding(WeightRef table, const std::vector<int>& ids) {
     else
         embedding_kernel<__nv_bfloat16><<<T, 128, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(table.data), d_ids, out.data(), D);
     CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaDeviceSynchronize());  // d_ids повертається в пул лише після завершення ядра
+    CUDA_CHECK(cudaDeviceSynchronize());  // d_ids may return to the pool only after the kernel has finished
     alloc.release(d_ids, id_bytes);
     return out;
 }
 
-// Embedding з id у пам'яті пристрою: без копіювання з хоста і без синхронізації, тож його можна
-// захопити в CUDA-граф. Хост id не бачить, тому недопустимий id (поза [0, V)) дає рядок із NaN,
-// який потім перетворить на помилку семплер, а не читання за межами таблиці.
+// Embedding with ids in device memory: no host copy and no synchronization, so it can be captured
+// into a CUDA graph. The host never sees the id, so an invalid id (outside [0, V)) yields a row of NaN,
+// which the sampler later turns into an error, instead of reading outside the table.
 template <typename WT>
 __global__ void embedding_dev_kernel(const WT* table, const int* ids, float* out, int V, int D) {
     const int id = ids[blockIdx.x];
@@ -228,7 +228,7 @@ Tensor embedding_dev(WeightRef table, const int* d_ids, int T) {
 }
 
 // ---------------------------------------------------------------------------
-// Копіювання рядків між тензорами (device -> device).
+// Copying rows between tensors (device -> device).
 // ---------------------------------------------------------------------------
 void write_rows(Tensor& dst, const Tensor& src, int row_offset) {
     if (dst.ndim() != 2 || src.ndim() != 2 || dst.dim(1) != src.dim(1))
@@ -254,19 +254,19 @@ Tensor slice_rows(const Tensor& x, int start, int count) {
 }
 
 // ---------------------------------------------------------------------------
-// Транспонування через shared memory: читання й запис обидва послідовні (coalesced).
-// Рядок плитки доповнено до 33, щоб уникнути конфліктів банків.
+// Transpose through shared memory: both the reads and the writes are sequential (coalesced).
+// The tile row is padded to 33 to avoid bank conflicts.
 // ---------------------------------------------------------------------------
 #define TT 32
 __global__ void transpose_kernel(const float* in, float* out, int R, int C) {
     __shared__ float tile[TT][TT + 1];
-    int x = blockIdx.x * TT + threadIdx.x;  // стовпець входу
-    int y = blockIdx.y * TT + threadIdx.y;  // рядок входу
+    int x = blockIdx.x * TT + threadIdx.x;  // input column
+    int y = blockIdx.y * TT + threadIdx.y;  // input row
     for (int j = 0; j < TT; j += 8)
         if (x < C && y + j < R) tile[threadIdx.y + j][threadIdx.x] = in[static_cast<size_t>(y + j) * C + x];
     __syncthreads();
-    x = blockIdx.y * TT + threadIdx.x;  // стовпець виходу = рядок входу
-    y = blockIdx.x * TT + threadIdx.y;  // рядок виходу = стовпець входу
+    x = blockIdx.y * TT + threadIdx.x;  // output column = input row
+    y = blockIdx.x * TT + threadIdx.y;  // output row = input column
     for (int j = 0; j < TT; j += 8)
         if (x < R && y + j < C) out[static_cast<size_t>(y + j) * R + x] = tile[threadIdx.x][threadIdx.y + j];
 }
@@ -282,7 +282,7 @@ Tensor transpose(const Tensor& x) {
 }
 
 // ---------------------------------------------------------------------------
-// Поелементні операції
+// Elementwise operations
 // ---------------------------------------------------------------------------
 __global__ void add_kernel(const float* a, const float* b, float* out, size_t n) {
     size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -293,7 +293,7 @@ __global__ void silu_mul_kernel(const float* g, const float* u, float* out, size
     size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i < n) {
         const float x = g[i];
-        out[i] = x / (1.f + expf(-x)) * u[i];  // expf(-x) = inf при великих від'ємних x, тоді x/inf = -0
+        out[i] = x / (1.f + expf(-x)) * u[i];  // expf(-x) = inf for large negative x, then x/inf = -0
     }
 }
 
@@ -322,8 +322,8 @@ Tensor silu_mul(const Tensor& gate, const Tensor& up) {
 }
 
 // ---------------------------------------------------------------------------
-// RoPE: один потік = одна пара (i, i + hd/2) однієї голови одного токена.
-// sinf/cosf (точні версії, не __sinf), бо кути великі й похибка швидких інтринсиків росте.
+// RoPE: one thread = one pair (i, i + hd/2) of one head of one token.
+// sinf/cosf (accurate versions, not __sinf), because the angles are large and the fast intrinsics' error grows.
 // ---------------------------------------------------------------------------
 __global__ void rope_kernel(const float* x, float* y, int total_pairs, int heads, int hd,
                             float theta, int pos_offset) {
@@ -361,9 +361,9 @@ Tensor rope(const Tensor& x, int num_heads, int head_dim, float theta, int pos_o
 }
 
 // ---------------------------------------------------------------------------
-// Attention: один блок = (токен t, голова h). Оцінки Q.K лежать у shared memory.
-// Кроки: оцінки -> максимум -> exp і сума -> зважена сума V.
-// Простий варіант без flash-тайлінгу; оптимізація буде на етапі 5.
+// Attention: one block = (token t, head h). The Q.K scores live in shared memory.
+// Steps: scores -> maximum -> exp and sum -> weighted sum of V.
+// Simple version without flash-style tiling.
 // ---------------------------------------------------------------------------
 __device__ float block_reduce_sum(float v, float* sh) {
     const int lane = threadIdx.x & 31, wid = threadIdx.x >> 5;
@@ -376,7 +376,7 @@ __device__ float block_reduce_sum(float v, float* sh) {
     if (threadIdx.x == 0) sh[0] = v;
     __syncthreads();
     float r = sh[0];
-    __syncthreads();  // sh можна використовувати повторно
+    __syncthreads();  // sh can be reused
     return r;
 }
 
@@ -395,10 +395,10 @@ __device__ float block_reduce_max(float v, float* sh) {
     return r;
 }
 
-// Позиція першого запиту береться з pos_ptr (пам'ять пристрою), якщо він не nullptr, інакше це
-// pos_offset. Перший варіант потрібен для CUDA-графа: один і той самий граф працює для будь-якої
-// позиції. max_keys - скільки ключів вміщує shared memory (і кеш): якщо позиція з пристрою виходить за
-// межі, вихід заповнюється NaN (помилка стає помітною), а не пишеться за межі shared memory.
+// The position of the first query is read from pos_ptr (device memory) if it is not nullptr, otherwise
+// it is pos_offset. The first form is needed for the CUDA graph: one graph works for any position.
+// max_keys is how many keys fit into shared memory (and the cache): if the position from the device is
+// out of range, the output is filled with NaN (the error is visible) instead of overrunning shared memory.
 __global__ void attention_kernel(const float* q, const float* k, const float* v, float* out,
                                  int H, int KV, int hd, int pos_offset, const int* pos_ptr, int max_keys,
                                  float scale) {
@@ -412,7 +412,7 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
     const size_t kv_stride = static_cast<size_t>(KV) * hd;
     const float* qh = q + (static_cast<size_t>(t) * H + h) * hd;
 
-    if (pos < 0 || nvalid > max_keys) {  // однакова гілка для всього блоку, тож повернення безпечне
+    if (pos < 0 || nvalid > max_keys) {  // same branch for the whole block, so returning is safe
         float* bad = out + (static_cast<size_t>(t) * H + h) * hd;
         for (int d = threadIdx.x; d < hd; d += blockDim.x) bad[d] = NAN;
         return;
@@ -435,7 +435,7 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
         scores[j] = e;
         lsum += e;
     }
-    const float inv = 1.f / block_reduce_sum(lsum, red);  // усередині є __syncthreads
+    const float inv = 1.f / block_reduce_sum(lsum, red);  // contains __syncthreads
 
     float* oh = out + (static_cast<size_t>(t) * H + h) * hd;
     for (int d = threadIdx.x; d < hd; d += blockDim.x) {
@@ -457,8 +457,8 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_head
         v.dim(1) != num_kv_heads * head_dim || k.dim(0) != v.dim(0))
         throw std::invalid_argument("attention: shape mismatch");
     const int T = q.dim(0), S = k.dim(0);
-    // З позицією на пристрої хост її не знає: shared memory беремо під увесь кеш (S ключів),
-    // а коректність позиції перевіряє саме ядро (див. attention_kernel).
+    // With the position on the device the host does not know it: size shared memory for the whole cache
+    // (S keys); the kernel itself validates the position (see attention_kernel).
     if (!d_pos && S < pos_offset + T)
         throw std::invalid_argument("attention: need S >= pos_offset + T");
     if (S > kMaxAttentionKeys)
@@ -475,8 +475,8 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_head
 }
 
 // ---------------------------------------------------------------------------
-// RMSNorm: один блок (256 потоків) = один рядок. Сума квадратів: спершу кожен
-// потік рахує свою частку, потім редукція всередині warp (shuffle) і між warp-ами.
+// RMSNorm: one block (256 threads) = one row. Sum of squares: first every thread computes
+// its own part, then a reduction within the warp (shuffle) and across warps.
 // ---------------------------------------------------------------------------
 __global__ void rmsnorm_kernel(const float* x, const float* w, float* y, int D, float eps) {
     const float* xr = x + static_cast<size_t>(blockIdx.x) * D;

@@ -1,11 +1,11 @@
-// GEMV для малих M (декодування): швидкість упирається в пропускну здатність пам'яті, бо кожен
-// елемент ваг читається рівно один раз. Тому ядро влаштоване так, щоб читати їх якомога ширшими
-// послідовними запитами.
+// GEMV for small M (decoding): speed is limited by memory bandwidth, because every weight element is
+// read exactly once. The kernel is therefore laid out to read the weights with the widest possible
+// sequential requests.
 //
-// Блок: GEMV_COLS x GEMV_KSPLIT потоків. Потік (tx, ty) обробляє VEC сусідніх стовпців
-// (tx * VEC .. tx * VEC + VEC - 1 всередині блоку) для елементів k = ty, ty + KSPLIT, ...
-// Warp (32 потоки з однаковим ty) за одну інструкцію читає 32 * VEC * sizeof(WT) послідовних байтів.
-// Потім GEMV_KSPLIT часткових сум додаються в shared memory.
+// Block: GEMV_COLS x GEMV_KSPLIT threads. Thread (tx, ty) handles VEC adjacent columns
+// (tx * VEC .. tx * VEC + VEC - 1 within the block) for elements k = ty, ty + KSPLIT, ...
+// A warp (32 threads with the same ty) reads 32 * VEC * sizeof(WT) consecutive bytes in one instruction.
+// The GEMV_KSPLIT partial sums are then added up in shared memory.
 #include <atomic>
 #include <stdexcept>
 #include <string>
@@ -25,13 +25,13 @@ void gemv_set_vec_override(int vec) {
 
 int gemv_choose_vec(int N, DType dt) {
     int v = g_vec_override.load();
-    if (v == 0) v = 4;  // (налаштовується вимірюванням, див. bench_ops)
+    if (v == 0) v = 4;  // (tuned by measurement, see bench_ops)
     (void)dt;
-    while (v > 1 && N % v != 0) v >>= 1;  // N має ділитись на VEC, інакше беремо менше
+    while (v > 1 && N % v != 0) v >>= 1;  // N must be divisible by VEC, otherwise use a smaller one
     return v;
 }
 
-// Сума квадратів рядка A (K елементів) по всьому блоку; результат rstd у s_rstd.
+// Sum of squares of a row of A (K elements) across the whole block; the resulting rstd goes to s_rstd.
 __device__ __forceinline__ float block_rstd(const float* a, int K, float eps, float* wsum, float* s_rstd) {
     const int tid = threadIdx.y * GEMV_COLS + threadIdx.x;
     float ss = 0.f;
@@ -53,7 +53,7 @@ __global__ void gemv_kernel(const float* A, const float* norm_w, float eps, cons
                             float* C, int M, int N, int K) {
     constexpr int BLOCK_COLS = GEMV_COLS * VEC;
     __shared__ float part[GEMV_KSPLIT][BLOCK_COLS];
-    __shared__ float wsum[GEMV_KSPLIT];  // 512 потоків = 16 warp-ів
+    __shared__ float wsum[GEMV_KSPLIT];  // 512 threads = 16 warps
     __shared__ float s_rstd;
 
     const int m = blockIdx.y;
@@ -68,7 +68,7 @@ __global__ void gemv_kernel(const float* A, const float* norm_w, float eps, cons
 #pragma unroll
     for (int j = 0; j < VEC; ++j) acc[j] = 0.f;
 
-    if (col0 < N)  // N кратне VEC (запускач це гарантує), тож весь вектор у межах
+    if (col0 < N)  // N is a multiple of VEC (the launcher guarantees it), so the whole vector is in bounds
         for (int k = threadIdx.y; k < K; k += GEMV_KSPLIT) {
             const float av = NORM ? a[k] * rstd * norm_w[k] : a[k];
             float w[VEC];
@@ -80,7 +80,7 @@ __global__ void gemv_kernel(const float* A, const float* norm_w, float eps, cons
     for (int j = 0; j < VEC; ++j) part[threadIdx.y][threadIdx.x * VEC + j] = acc[j];
     __syncthreads();
 
-    if (tid < BLOCK_COLS) {  // перші BLOCK_COLS потоків додають часткові суми своїх стовпців
+    if (tid < BLOCK_COLS) {  // the first BLOCK_COLS threads add up the partial sums of their columns
         const int col = blockIdx.x * BLOCK_COLS + tid;
         if (col < N) {
             float s = 0.f;

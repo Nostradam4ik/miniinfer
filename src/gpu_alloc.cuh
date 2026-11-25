@@ -1,14 +1,14 @@
 #pragma once
-// Кешуючий алокатор пам'яті GPU.
+// Caching GPU memory allocator.
 //
-// Чому він потрібен: cudaMalloc дорогий, а cudaFree ще й синхронізує весь пристрій. Модель
-// створює сотні тимчасових тензорів на кожен токен, тож без пулу час іде на виділення пам'яті,
-// а не на обчислення. Тут звільнений блок лишається в списку і віддається наступному запиту
-// такого ж розміру.
+// Why it exists: cudaMalloc is expensive, and cudaFree also synchronizes the whole device. The model
+// creates hundreds of temporary tensors per token, so without a pool the time goes into allocating
+// memory instead of computing. Here a freed block stays in a list and is handed to the next request
+// of the same size.
 //
-// Розміри округлюються вгору до сходинок 1/4 октави (512, 640, 768, 896, 1024, 1280, ...),
-// тому втрати пам'яті не перевищують 25 %. Один потік виконання, один CUDA stream
-// (стандартний): повторне використання блоку безпечне, бо всі операції в потоці впорядковані.
+// Sizes are rounded up to quarter-octave steps (512, 640, 768, 896, 1024, 1280, ...), so memory
+// waste never exceeds 25%. One host thread, one CUDA stream (the default one): reusing a block is
+// safe because all operations in a stream are ordered.
 #include <cstddef>
 #include <mutex>
 #include <stdexcept>
@@ -17,14 +17,14 @@
 #include <vector>
 #include "cuda_utils.cuh"
 
-// Арена: один великий блок пам'яті GPU, з якого видається пам'ять "бампом" (без повторного
-// використання). Потрібна для CUDA-графів: усі проміжні тензори кроку, захопленого в граф, мають
-// жити стільки, скільки живе граф, і їхні адреси не можуть потрапити назад у пул, інакше хтось
-// інший перезапише буфери, на які граф ще посилається. Арена належить графові; тензори, видані
-// з неї, не повинні пережити арену.
+// Arena: one large GPU memory block handed out by bumping a pointer (no reuse). CUDA graphs need it:
+// every intermediate tensor of a captured step has to live as long as the graph, and its address
+// must not go back to the pool, otherwise someone else would overwrite buffers the graph still
+// references.
+// The graph owns the arena; tensors allocated from it must not outlive the arena.
 class GpuArena {
 public:
-    explicit GpuArena(size_t bytes);  // виділяє пам'ять (поза захопленням!) і реєструється в алокаторі
+    explicit GpuArena(size_t bytes);  // allocates the memory (outside capture!) and registers with the allocator
     ~GpuArena();
     GpuArena(const GpuArena&) = delete;
     GpuArena& operator=(const GpuArena&) = delete;
@@ -55,17 +55,17 @@ private:
 class GpuAllocator {
 public:
     struct Stats {
-        size_t requests = 0;      // скільки разів просили пам'ять
-        size_t pool_hits = 0;     // скільки віддано з пулу без cudaMalloc
-        size_t cuda_mallocs = 0;  // реальні виклики cudaMalloc
-        size_t cuda_frees = 0;    // реальні виклики cudaFree
-        size_t arena_allocs = 0;  // скільки блоків видано з арени
-        size_t bytes_in_use = 0;  // зараз віддано тензорам
-        size_t bytes_cached = 0;  // лежить у пулі
+        size_t requests = 0;      // how many times memory was requested
+        size_t pool_hits = 0;     // how many were served from the pool without cudaMalloc
+        size_t cuda_mallocs = 0;  // real cudaMalloc calls
+        size_t cuda_frees = 0;    // real cudaFree calls
+        size_t arena_allocs = 0;  // how many blocks were served from an arena
+        size_t bytes_in_use = 0;  // currently held by tensors
+        size_t bytes_cached = 0;  // sitting in the pool
     };
 
-    // Намірено "протікає" при завершенні процесу: деструктор статичного об'єкта міг би
-    // спрацювати вже після знищення контексту CUDA.
+    // Deliberately "leaked" at process exit: the destructor of a static object could run after the
+    // CUDA context has already been destroyed.
     static GpuAllocator& instance() {
         static GpuAllocator* a = new GpuAllocator();
         return *a;
@@ -75,7 +75,7 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         ++stats_.requests;
         if (bytes == 0) return nullptr;
-        if (active_arena_) {  // захоплення графа: пам'ять із арени, без cudaMalloc і без повернення в пул
+        if (active_arena_) {  // graph capture: memory comes from the arena, no cudaMalloc, never returns to the pool
             ++stats_.arena_allocs;
             return active_arena_->bump(bytes);
         }
@@ -94,7 +94,7 @@ public:
         void* p = nullptr;
         cudaError_t err = cudaMalloc(&p, size);
         if (err != cudaSuccess && pooling_ && stats_.bytes_cached > 0) {
-            cudaGetLastError();  // скидаємо помилку; віддаємо кеш і пробуємо ще раз
+            cudaGetLastError();  // clear the error; release the cache and try again
             trim_locked();
             err = cudaMalloc(&p, size);
         }
@@ -104,11 +104,11 @@ public:
         return p;
     }
 
-    // bytes - той самий розмір, що передавали в allocate.
+    // bytes is the same size that was passed to allocate.
     void release(void* p, size_t bytes) noexcept {
         if (!p) return;
         std::lock_guard<std::mutex> lock(mu_);
-        if (is_arena_pointer(p)) return;  // пам'ять арени звільняє лише сама арена
+        if (is_arena_pointer(p)) return;  // arena memory is only released by the arena itself
         const size_t size = pooling_ ? bucket_size(bytes) : bytes;
         stats_.bytes_in_use -= size;
         if (pooling_) {
@@ -120,8 +120,8 @@ public:
         }
     }
 
-    // Увімкнути/вимкнути пул (вимкнений = cudaMalloc/cudaFree на кожен тензор, для порівняння).
-    // Перемикати можна лише коли немає живих тензорів: розмір блоку залежить від режиму.
+    // Enable/disable the pool (disabled = cudaMalloc/cudaFree for every tensor, for comparison).
+    // Only switch while no tensors are alive: the block size depends on the mode.
     void set_pooling(bool on) {
         std::lock_guard<std::mutex> lock(mu_);
         if (stats_.bytes_in_use != 0)
@@ -131,7 +131,7 @@ public:
     }
     bool pooling() const { return pooling_; }
 
-    // Усі наступні allocate() видаються з арени (до end_arena). Лише для захоплення графа.
+        // All following allocate() calls are served from the arena (until end_arena). Graph capture only.
     void begin_arena(GpuArena* a) {
         std::lock_guard<std::mutex> lock(mu_);
         if (active_arena_) throw std::runtime_error("GpuAllocator::begin_arena: an arena is already active");
@@ -146,7 +146,7 @@ public:
         return active_arena_ != nullptr;
     }
 
-    // Повертає кеш системі.
+    // Returns the cache to the system.
     void trim() {
         std::lock_guard<std::mutex> lock(mu_);
         trim_locked();
@@ -156,13 +156,13 @@ public:
         std::lock_guard<std::mutex> lock(mu_);
         return stats_;
     }
-    // Обнуляє лічильники викликів (але не поточний обсяг пам'яті).
+    // Resets the call counters (but not the current amount of memory).
     void reset_counters() {
         std::lock_guard<std::mutex> lock(mu_);
         stats_.requests = stats_.pool_hits = stats_.cuda_mallocs = stats_.cuda_frees = 0;
     }
 
-    // Розмір блоку для запиту: найближча сходинка 1/4 октави (не менше 512 байтів).
+    // Block size for a request: the nearest quarter-octave step (at least 512 bytes).
     static size_t bucket_size(size_t bytes) {
         if (bytes <= 512) return 512;
         size_t p = 512;
@@ -225,7 +225,7 @@ inline GpuArena::~GpuArena() {
     cudaFree(base_);
 }
 
-// Під час життя цього об'єкта всі виділення пам'яті йдуть в арену.
+// While this object is alive, all memory allocations go to the arena.
 class ArenaScope {
 public:
     explicit ArenaScope(GpuArena& a) { GpuAllocator::instance().begin_arena(&a); }
