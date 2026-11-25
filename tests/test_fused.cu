@@ -364,3 +364,29 @@ TEST(attention_with_device_position_is_correct_for_large_caches) {
                    1e-5);
     }
 }
+
+// On the large-M path every fused operation multiplies with the kernel it is asked for: bitwise the same as
+// the separate operations with that kernel, and with Wmma not the same as with the default.
+TEST(fused_large_m_honours_matmul_kind) {
+    const int M = 70, K = 64, N = 128;
+    const Tensor x = Tensor::from_host(rnd(static_cast<size_t>(M) * K, 1), {M, K});
+    const Tensor nw = Tensor::from_host(rnd(K, 2), {K});
+    const Tensor res = Tensor::from_host(rnd(static_cast<size_t>(M) * N, 3), {M, N});
+    const LowpMatrix W = to_lowp(Tensor::from_host(rnd(static_cast<size_t>(K) * N, 4), {K, N}), DType::BF16);
+    const LowpMatrix Wu = to_lowp(Tensor::from_host(rnd(static_cast<size_t>(K) * N, 5), {K, N}), DType::BF16);
+    const float eps = 1e-5f;
+    const MatmulKind tc = MatmulKind::Wmma;
+
+    const std::vector<float> a = rmsnorm_matmul(x, nw, eps, W, tc).to_host();
+    CHECK(a == matmul(rmsnorm(x, nw, eps), W, tc).to_host());
+    CHECK(a != rmsnorm_matmul(x, nw, eps, W).to_host());
+
+    const std::vector<float> b = matmul_residual(x, W, res, tc).to_host();
+    CHECK(b == add(matmul(x, W, tc), res).to_host());
+    CHECK(b != matmul_residual(x, W, res).to_host());
+
+    const std::vector<float> c = rmsnorm_gate_up(x, nw, eps, W, Wu, tc).to_host();
+    const Tensor h = rmsnorm(x, nw, eps);
+    CHECK(c == silu_mul(matmul(h, W, tc), matmul(h, Wu, tc)).to_host());
+    CHECK(c != rmsnorm_gate_up(x, nw, eps, W, Wu).to_host());
+}

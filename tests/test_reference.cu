@@ -476,3 +476,89 @@ TEST(ref_layer0_qkv_projections_match_pytorch) {
         check_close(p.out, matmul(x, wt).to_host(), r->ref.floats(p.out), 1e-4);
     }
 }
+
+// ---- tensor core prefill ----------------------------------------------------
+
+namespace {
+
+// A bf16 model of its own, so that changing its prefill matmul cannot leak into other tests.
+Model& bf16_model() {
+    static Model* m = new Model(Model::load(std::string(MINIINFER_ROOT) + "/model", DType::BF16));
+    return *m;
+}
+
+// Sets the prefill matmul and restores the default when the scope ends, also if a check fails.
+struct ScopedPrefillMatmul {
+    Model& model;
+    ScopedPrefillMatmul(Model& m, MatmulKind kind) : model(m) { model.set_prefill_matmul(kind); }
+    ~ScopedPrefillMatmul() { model.set_prefill_matmul(MatmulKind::Reg); }
+};
+
+std::vector<int> synthetic_ids(int n) {
+    std::vector<int> ids(n);
+    for (int i = 0; i < n; ++i) ids[i] = 1000 + (i * 37) % 20000;
+    return ids;
+}
+
+// Logits [T x V] of a fresh prefill with the given matmul.
+std::vector<float> prefill_logits(Model& m, const std::vector<int>& ids, MatmulKind kind) {
+    ScopedPrefillMatmul scope(m, kind);
+    KVCache cache(m.cfg, static_cast<int>(ids.size()));
+    return m.forward_cached(ids, cache).to_host();
+}
+
+}  // namespace
+
+TEST(model_prefill_matmul_defaults_to_reg_and_validates) {
+    Ref* r = load_ref();
+    if (!r) return;
+    Model& m = bf16_model();
+    CHECK(m.prefill_matmul() == MatmulKind::Reg);
+    CHECK_THROWS(m.set_prefill_matmul(MatmulKind::Gemv));
+    CHECK_THROWS(m.set_prefill_matmul(MatmulKind::Auto));
+    CHECK(m.prefill_matmul() == MatmulKind::Reg);
+    Model f32 = Model::load(std::string(MINIINFER_ROOT) + "/model");
+    CHECK_THROWS(f32.set_prefill_matmul(MatmulKind::Wmma));
+    CHECK(f32.prefill_matmul() == MatmulKind::Reg);
+}
+
+// The bound is a sanity check that the setting is used and does not break the model; the accuracy of the
+// mode is reported by ref_long_text_reg_and_wmma_against_pytorch.
+TEST(model_wmma_prefill_differs_slightly_from_reg) {
+    Ref* r = load_ref();
+    if (!r) return;
+    const std::vector<int> ids = synthetic_ids(70);
+    const std::vector<float> reg = prefill_logits(bf16_model(), ids, MatmulKind::Reg);
+    const std::vector<float> tc = prefill_logits(bf16_model(), ids, MatmulKind::Wmma);
+    CHECK(reg != tc);
+    CHECK(rel_diff(tc, reg) <= 0.05);
+}
+
+TEST(model_wmma_chunked_prefill_matches_single_pass) {
+    Ref* r = load_ref();
+    if (!r) return;
+    Model& m = bf16_model();
+    const std::vector<int> ids = synthetic_ids(70);
+    const std::vector<float> whole = prefill_logits(m, ids, MatmulKind::Wmma);
+    ScopedPrefillMatmul scope(m, MatmulKind::Wmma);
+    KVCache cache(m.cfg, 70);
+    m.forward_cached(std::vector<int>(ids.begin(), ids.begin() + 40), cache);
+    const std::vector<float> tail = m.forward_cached(std::vector<int>(ids.begin() + 40, ids.end()), cache).to_host();
+    const std::vector<float> want(whole.begin() + static_cast<size_t>(40) * m.cfg.vocab_size, whole.end());
+    CHECK(tail.size() == want.size());
+    CHECK(rel_diff(tail, want) <= 0.05);
+}
+
+// A single-token step uses GEMV whatever the prefill matmul is.
+TEST(model_prefill_setting_does_not_change_decoding) {
+    Ref* r = load_ref();
+    if (!r) return;
+    Model& m = bf16_model();
+    const std::vector<int> ids = synthetic_ids(40);
+    KVCache first(m.cfg, 48), second(m.cfg, 48);
+    m.forward_cached(ids, first, true);
+    m.forward_cached(ids, second, true);
+    const std::vector<float> with_reg = m.forward_cached({504}, first, true).to_host();
+    ScopedPrefillMatmul scope(m, MatmulKind::Wmma);
+    CHECK(m.forward_cached({504}, second, true).to_host() == with_reg);
+}

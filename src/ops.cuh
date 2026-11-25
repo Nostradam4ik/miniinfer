@@ -44,16 +44,19 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_head
 
 // ---- Fused operations (fewer kernel launches per token) --------------------------------------
 // For small M (<= kGemvMaxRows, i.e. decoding) each one is a single launch.
-// For larger M there is a safe fallback: the same results through separate operations.
+// For larger M there is a safe fallback: the same results through separate operations. Their matmuls use
+// the kernel given by `large`.
 
 // rmsnorm(x, norm_w) * W. x: [M x K], norm_w: [K], W: [K x N].
-Tensor rmsnorm_matmul(const Tensor& x, const Tensor& norm_w, float eps, WeightRef W);
+Tensor rmsnorm_matmul(const Tensor& x, const Tensor& norm_w, float eps, WeightRef W,
+                      MatmulKind large = MatmulKind::Reg);
 
 // x * W + residual. x: [M x K], W: [K x N], residual: [M x N].
-Tensor matmul_residual(const Tensor& x, WeightRef W, const Tensor& residual);
+Tensor matmul_residual(const Tensor& x, WeightRef W, const Tensor& residual, MatmulKind large = MatmulKind::Reg);
 
 // silu(h * Wg) * (h * Wu), where h = rmsnorm(x, norm_w). x: [M x K], Wg, Wu: [K x N].
-Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightRef Wg, WeightRef Wu);
+Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightRef Wg, WeightRef Wu,
+                       MatmulKind large = MatmulKind::Reg);
 
 // The result of the matmul x * Wqkv is split into Q, K, V with shape [T x (H + 2*KV)*hd]. RoPE is applied
 // to Q and K; the returned tensor is the rotated Q [T x H*hd]; the rotated K and V are written into the

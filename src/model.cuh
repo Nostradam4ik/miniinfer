@@ -9,6 +9,7 @@
 #include "ops.cuh"
 #include "tensor.cuh"
 #include "weights.h"
+#include "wmma.h"
 
 struct ModelConfig {
     int vocab_size = 0, hidden_size = 0, intermediate_size = 0;
@@ -162,24 +163,24 @@ struct KVCache {
 // the CUDA graph (see graph.cuh).
 template <class LW>
 inline Tensor decoder_layer_cached(const Tensor& x, const LW& w, const ModelConfig& c, KVCache& cache, int layer,
-                                   int pos_offset, const int* d_pos = nullptr) {
+                                   int pos_offset, const int* d_pos = nullptr, MatmulKind large = MatmulKind::Reg) {
     if (WeightRef(w.wqkv).rows == 0)
         throw std::invalid_argument("decoder_layer_cached: wqkv is empty (call build_fused())");
-    Tensor qkv = rmsnorm_matmul(x, w.in_norm, c.rms_norm_eps, w.wqkv);
+    Tensor qkv = rmsnorm_matmul(x, w.in_norm, c.rms_norm_eps, w.wqkv, large);
     Tensor q = rope_qkv_to_cache(qkv, c.num_heads, c.num_kv_heads, c.head_dim, c.rope_theta, pos_offset, cache.k[layer],
                                  cache.v[layer], d_pos);
     Tensor ctx =
         attention(q, cache.k[layer], cache.v[layer], c.num_heads, c.num_kv_heads, c.head_dim, pos_offset, d_pos);
-    Tensor x1 = matmul_residual(ctx, w.wo, x);
-    Tensor act = rmsnorm_gate_up(x1, w.post_norm, c.rms_norm_eps, w.w_gate, w.w_up);
-    return matmul_residual(act, w.w_down, x1);
+    Tensor x1 = matmul_residual(ctx, w.wo, x, large);
+    Tensor act = rmsnorm_gate_up(x1, w.post_norm, c.rms_norm_eps, w.w_gate, w.w_up, large);
+    return matmul_residual(act, w.w_down, x1, large);
 }
 
 // Shared implementation of a KV-cache step for fp32 and fp16/bf16 weights.
 template <class LW>
 inline Tensor forward_cached_impl(const ModelConfig& cfg, WeightRef embed, const std::vector<LW>& layers,
                                   const Tensor& final_norm, WeightRef lm_head, const std::vector<int>& ids,
-                                  KVCache& cache, bool last_only) {
+                                  KVCache& cache, bool last_only, MatmulKind large) {
     if (ids.empty()) throw std::invalid_argument("Model::forward_cached: empty input");
     if (static_cast<long long>(cache.length) + static_cast<long long>(ids.size()) > cache.max_seq)
         throw std::invalid_argument("Model::forward_cached: KV cache is full (" + std::to_string(cache.length) + " + " +
@@ -188,10 +189,10 @@ inline Tensor forward_cached_impl(const ModelConfig& cfg, WeightRef embed, const
         throw std::invalid_argument("Model::forward_cached: cache does not match model");
     const int pos = cache.length;
     Tensor h = embedding(embed, ids);
-    for (int i = 0; i < cfg.num_layers; ++i) h = decoder_layer_cached(h, layers[i], cfg, cache, i, pos);
+    for (int i = 0; i < cfg.num_layers; ++i) h = decoder_layer_cached(h, layers[i], cfg, cache, i, pos, nullptr, large);
     cache.length += static_cast<int>(ids.size());
     if (last_only) h = slice_rows(h, h.dim(0) - 1, 1);
-    return rmsnorm_matmul(h, final_norm, cfg.rms_norm_eps, lm_head);  // final norm + lm_head
+    return rmsnorm_matmul(h, final_norm, cfg.rms_norm_eps, lm_head, large);  // final norm + lm_head
 }
 
 // One decode step (one token) with the token and position in DEVICE MEMORY: no host copies,
@@ -224,7 +225,8 @@ struct Model {
     // dtype == F16 or BF16:
     LowpMatrix embed_lp, lm_head_lp;
     std::vector<LayerWeightsLP> layers_lp;
-    LowpStats lowp_stats;  // precision lost in conversion (over all matrices)
+    LowpStats lowp_stats;                          // precision lost in conversion (over all matrices)
+    MatmulKind prefill_matmul_ = MatmulKind::Reg;  // see set_prefill_matmul
 
     // dir contains config.txt, weights.bin and weights.manifest.txt (tools/export_reference.py).
     static Model load(const std::string& dir, DType dt = DType::F32) {
@@ -255,6 +257,19 @@ struct Model {
         }
         return m;
     }
+
+    // The matmul used for more than kGemvMaxRows rows (prefill): Reg (default) or Wmma. Wmma runs on tensor
+    // cores and rounds the activations to bf16, so the results differ. Single-token decoding does not use it.
+    void set_prefill_matmul(MatmulKind kind) {
+        if (kind != MatmulKind::Reg && kind != MatmulKind::Wmma)
+            throw std::invalid_argument("Model::set_prefill_matmul: only Reg and Wmma can be selected");
+        if (kind == MatmulKind::Wmma && dtype != DType::BF16)
+            throw std::invalid_argument("Model::set_prefill_matmul: Wmma needs bf16 weights");
+        if (kind == MatmulKind::Wmma && !wmma_supported_by_device())
+            throw std::invalid_argument("Model::set_prefill_matmul: the GPU has no bf16 tensor cores");
+        prefill_matmul_ = kind;
+    }
+    MatmulKind prefill_matmul() const { return prefill_matmul_; }
 
     // Bytes taken by the weights of the large matrices (without norms).
     size_t weight_bytes() const {
@@ -288,8 +303,9 @@ struct Model {
     // [T x hidden] x [hidden x vocab] matmul). Returns [T x vocab] or [1 x vocab].
     Tensor forward_cached(const std::vector<int>& ids, KVCache& cache, bool last_only = false) const {
         if (dtype == DType::F32)
-            return forward_cached_impl(cfg, embed, layers, final_norm, lm_head, ids, cache, last_only);
-        return forward_cached_impl(cfg, embed_lp, layers_lp, final_norm, lm_head_lp, ids, cache, last_only);
+            return forward_cached_impl(cfg, embed, layers, final_norm, lm_head, ids, cache, last_only, prefill_matmul_);
+        return forward_cached_impl(cfg, embed_lp, layers_lp, final_norm, lm_head_lp, ids, cache, last_only,
+                                   prefill_matmul_);
     }
 
     // One token from d_token and position d_pos in device memory (see forward_decode_dev).

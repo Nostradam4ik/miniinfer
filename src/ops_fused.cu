@@ -12,29 +12,29 @@ static void check_fused_shapes(const Tensor& x, const WeightRef& W, const char* 
         throw std::invalid_argument(std::string(op) + ": expected x[M x K] and W[K x N]");
 }
 
-Tensor rmsnorm_matmul(const Tensor& x, const Tensor& norm_w, float eps, WeightRef W) {
+Tensor rmsnorm_matmul(const Tensor& x, const Tensor& norm_w, float eps, WeightRef W, MatmulKind large) {
     check_fused_shapes(x, W, "rmsnorm_matmul");
     if (norm_w.ndim() != 1 || norm_w.dim(0) != x.dim(1))
         throw std::invalid_argument("rmsnorm_matmul: norm_w must be [K]");
     const int M = x.dim(0), K = x.dim(1), N = W.cols;
-    if (M == 0 || N == 0 || K == 0 || M > kGemvMaxRows) return matmul(rmsnorm(x, norm_w, eps), W);
+    if (M == 0 || N == 0 || K == 0 || M > kGemvMaxRows) return matmul(rmsnorm(x, norm_w, eps), W, large);
     Tensor out = Tensor::uninitialized({M, N});
     gemv_launch(x.data(), norm_w.data(), eps, W.data, W.dtype, nullptr, out.data(), M, N, K);
     return out;
 }
 
-Tensor matmul_residual(const Tensor& x, WeightRef W, const Tensor& residual) {
+Tensor matmul_residual(const Tensor& x, WeightRef W, const Tensor& residual, MatmulKind large) {
     check_fused_shapes(x, W, "matmul_residual");
     const int M = x.dim(0), K = x.dim(1), N = W.cols;
     if (residual.ndim() != 2 || residual.dim(0) != M || residual.dim(1) != N)
         throw std::invalid_argument("matmul_residual: residual must be [M x N]");
-    if (M == 0 || N == 0 || K == 0 || M > kGemvMaxRows) return add(matmul(x, W), residual);
+    if (M == 0 || N == 0 || K == 0 || M > kGemvMaxRows) return add(matmul(x, W, large), residual);
     Tensor out = Tensor::uninitialized({M, N});
     gemv_launch(x.data(), nullptr, 0.f, W.data, W.dtype, residual.data(), out.data(), M, N, K);
     return out;
 }
 
-Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightRef Wg, WeightRef Wu) {
+Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightRef Wg, WeightRef Wu, MatmulKind large) {
     check_fused_shapes(x, Wg, "rmsnorm_gate_up");
     if (Wu.ndim != 2 || Wu.rows != Wg.rows || Wu.cols != Wg.cols)
         throw std::invalid_argument("rmsnorm_gate_up: Wg and Wu shapes differ");
@@ -44,7 +44,7 @@ Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightR
     const int M = x.dim(0), K = x.dim(1), N = Wg.cols;
     if (M == 0 || N == 0 || K == 0 || M > kGemvMaxRows) {
         Tensor h = rmsnorm(x, norm_w, eps);
-        return silu_mul(matmul(h, Wg), matmul(h, Wu));
+        return silu_mul(matmul(h, Wg, large), matmul(h, Wu, large));
     }
     Tensor out = Tensor::uninitialized({M, N});
     gemv_gate_up_launch(x.data(), norm_w.data(), eps, Wg.data, Wu.data, Wg.dtype, out.data(), M, N, K);
