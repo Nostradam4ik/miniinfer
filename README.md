@@ -19,10 +19,10 @@ token for token). These statements describe the default mode. An opt-in
 | Tests | 166 checks (`tests.exe`), including comparison against PyTorch activations |
 
 **Against llama.cpp** (same model, bf16, same GPU): single-token decode is **1.10x faster** than llama.cpp
-(407 vs 369 tok/s), but prefill in the default mode is **1.3x to 2.5x slower** (128 and 512 tokens). With the
-opt-in tensor core prefill, which rounds activations to bf16, it is **1.7x slower** at 512 tokens; at 128
-tokens llama.cpp varied too much in this run to compare. The ratios differ between runs. Details and caveats
-are [below](#comparison-with-llamacpp).
+(407 vs 369 tok/s), but prefill is clearly slower. At 512 tokens it is **2.5x slower** in the default mode and
+**1.7x slower** with the opt-in tensor core prefill, which rounds activations to bf16. At 128 tokens llama.cpp
+was unstable in this run: the default mode was 1.3x slower here and 1.5x and 1.7x slower in two earlier runs.
+The ratios differ between runs. Details and caveats are [below](#comparison-with-llamacpp).
 
 ## Comparison with llama.cpp
 
@@ -51,11 +51,12 @@ llama.cpp BF16 was identical on 3 prompts of 60 tokens each.
   one architecture and replays one CUDA Graph; llama.cpp is a general engine that supports many
   architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (342 vs 369), and
   quantized llama.cpp is faster than MiniInfer even with the graph.
-- Prefill is the clear weakness. In the default mode llama.cpp BF16 is 1.3x faster at 128 tokens and 2.5x
-  faster at 512. With `wmma` it is still 1.7x faster at 512.
-- The 128-token column does not rank the engines in this run: the `wmma` median is above the llama.cpp BF16
-  median, but llama.cpp ranged from 6,932 to 13,075 tok/s, and in two earlier runs its median was 12,122 and
-  14,468.
+- Prefill is the clear weakness. At 512 tokens llama.cpp BF16 is 2.5x faster than the default mode and still
+  1.7x faster than `wmma`.
+- At 128 tokens llama.cpp BF16 ranged from 6,932 to 13,075 tok/s in this run, so do not rely on that column.
+  Its median here gives llama.cpp a 1.3x lead over the default mode; in two earlier runs its medians (12,122 and
+  14,468) gave 1.5x and 1.7x. The `wmma` median is above this run's llama.cpp BF16 median, but inside its range
+  and below both earlier medians, so it does not show which engine is faster.
 - The `wmma` row is not the same computation as the default: it rounds activations to bf16 (see
   [below](#tensor-core-prefill-opt-in) for what that changes). How llama.cpp rounds its activations was not
   checked.
@@ -200,8 +201,8 @@ to the build before the kernel was added.
 
 ### What is left on the table
 
-- Prefill: in the default mode 1.3x (128 tokens) to 2.5x (512 tokens) behind llama.cpp BF16 in the latest
-  run, and 1.7x at 512 with `wmma`. This is the largest known gap.
+- Prefill: at 512 tokens 2.5x behind llama.cpp BF16 in the default mode and 1.7x with `wmma` (latest run).
+  This is the largest known gap.
 - The WMMA kernel is simple: `mma.sync` and `ldmatrix` in PTX, and a better tile choice for short prompts,
   were not tried.
 - Device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est. 0.1-0.3 ms).

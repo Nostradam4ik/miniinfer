@@ -103,6 +103,10 @@ __global__ void matmul_wmma_kernel(const float* A, const __nv_bfloat16* B, float
             *reinterpret_cast<float4*>(C + static_cast<size_t>(block_row + r) * N + block_col + c) =
                 *reinterpret_cast<const float4*>(shared + r * kTile + c);
     }
+#else
+    // Code built for an older target can still be compiled by the driver for a newer GPU, which passes
+    // wmma_supported_by_device(). The launch must then fail instead of leaving C unwritten.
+    __trap();
 #endif
 }
 

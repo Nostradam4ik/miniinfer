@@ -546,8 +546,9 @@ TEST(model_wmma_chunked_prefill_matches_single_pass) {
     m.forward_cached(std::vector<int>(ids.begin(), ids.begin() + 40), cache);
     const std::vector<float> tail = m.forward_cached(std::vector<int>(ids.begin() + 40, ids.end()), cache).to_host();
     const std::vector<float> want(whole.begin() + static_cast<size_t>(40) * m.cfg.vocab_size, whole.end());
-    CHECK(tail.size() == want.size());
-    CHECK(rel_diff(tail, want) <= 0.05);
+    // Both chunks have more than kGemvMaxRows rows, so they take the same kernels as the single pass, and the
+    // result is the same bit for bit.
+    CHECK(tail == want);
 }
 
 // A single-token step uses GEMV whatever the prefill matmul is.
