@@ -137,7 +137,8 @@ TEST(graph_buffers_are_isolated_from_the_pool) {
     // Tensors of the same sizes as the intermediates in the graph, with known contents. If the graph shared
     // memory with them, it would overwrite them, and they would overwrite its buffers.
     std::vector<Tensor> bystanders;
-    const std::vector<std::vector<int>> shapes = {{1, H}, {1, qkv}, {1, I}, {1, V}, {1, m.cfg.num_heads * m.cfg.head_dim}};
+    const std::vector<std::vector<int>> shapes = {
+        {1, H}, {1, qkv}, {1, I}, {1, V}, {1, m.cfg.num_heads * m.cfg.head_dim}};
     for (size_t i = 0; i < shapes.size(); ++i) {
         size_t n = 1;
         for (int d : shapes[i]) n *= d;
@@ -146,7 +147,8 @@ TEST(graph_buffers_are_isolated_from_the_pool) {
 
     std::vector<float> got;
     for (int tok : toks) {
-        std::vector<float> want = m.forward_cached({tok}, normal, true).to_host();  // the regular path uses the pool too
+        std::vector<float> want =
+            m.forward_cached({tok}, normal, true).to_host();  // the regular path uses the pool too
         g.step(tok, got);
         CHECK(rel_diff(got, want) <= 1e-6);
     }
@@ -167,7 +169,7 @@ TEST(graph_validates_tokens_and_cache_capacity) {
     CHECK(cache.length == 4);
     CHECK_THROWS(g.step(1, out));  // the cache is full
     CHECK(cache.length == 4);
-    cache.reset();                  // after reset the graph works again from position zero
+    cache.reset();  // after reset the graph works again from position zero
     g.step(1, out);
     CHECK(cache.length == 1);
 }
@@ -270,7 +272,8 @@ TEST(graph_capture_failure_leaves_everything_usable) {
     try {
         DecodeGraph g(m, cache, 4096);  // too small even for the logits
     } catch (const std::exception& e) {
-        threw = std::string(e.what()).find("arena") != std::string::npos || std::string(e.what()).find("Arena") != std::string::npos;
+        threw = std::string(e.what()).find("arena") != std::string::npos ||
+                std::string(e.what()).find("Arena") != std::string::npos;
     }
     CHECK(threw);
     CHECK(!GpuAllocator::instance().arena_active());

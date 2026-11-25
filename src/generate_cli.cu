@@ -50,26 +50,44 @@ int main(int argc, char** argv) {
                 if (i + 1 >= argc) throw std::invalid_argument("missing value for " + a);
                 return argv[++i];
             };
-            if (a == "--help" || a == "-h") { usage(); return 0; }
-            else if (a == "--model") model_dir = next();
+            if (a == "--help" || a == "-h") {
+                usage();
+                return 0;
+            } else if (a == "--model")
+                model_dir = next();
             else if (a == "--dtype") {
                 const std::string t = next();
-                if (t == "f32") dtype = DType::F32;
-                else if (t == "f16") dtype = DType::F16;
-                else if (t == "bf16") dtype = DType::BF16;
-                else throw std::invalid_argument("--dtype must be f32, f16 or bf16");
-            }
-            else if (a == "--graph") opt.use_graph = true;
-            else if (a == "--ids") ids = parse_ids(next());
-            else if (a == "--max") opt.max_new_tokens = std::stoi(next());
-            else if (a == "--temp") opt.sampler.temperature = std::stof(next());
-            else if (a == "--top-k") opt.sampler.top_k = std::stoi(next());
-            else if (a == "--top-p") opt.sampler.top_p = std::stof(next());
-            else if (a == "--seed") opt.sampler.seed = static_cast<unsigned>(std::stoul(next()));
-            else if (a == "--stop") opt.stop_ids = parse_ids(next());
-            else throw std::invalid_argument("unknown option: " + a);
+                if (t == "f32")
+                    dtype = DType::F32;
+                else if (t == "f16")
+                    dtype = DType::F16;
+                else if (t == "bf16")
+                    dtype = DType::BF16;
+                else
+                    throw std::invalid_argument("--dtype must be f32, f16 or bf16");
+            } else if (a == "--graph")
+                opt.use_graph = true;
+            else if (a == "--ids")
+                ids = parse_ids(next());
+            else if (a == "--max")
+                opt.max_new_tokens = std::stoi(next());
+            else if (a == "--temp")
+                opt.sampler.temperature = std::stof(next());
+            else if (a == "--top-k")
+                opt.sampler.top_k = std::stoi(next());
+            else if (a == "--top-p")
+                opt.sampler.top_p = std::stof(next());
+            else if (a == "--seed")
+                opt.sampler.seed = static_cast<unsigned>(std::stoul(next()));
+            else if (a == "--stop")
+                opt.stop_ids = parse_ids(next());
+            else
+                throw std::invalid_argument("unknown option: " + a);
         }
-        if (ids.empty()) { usage(); throw std::invalid_argument("--ids is required"); }
+        if (ids.empty()) {
+            usage();
+            throw std::invalid_argument("--ids is required");
+        }
 
         Model model = Model::load(model_dir, dtype);
         GenerateResult res = generate(model, ids, opt, [](int t) {
@@ -81,7 +99,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[prefill %zu tokens: %.1f ms | decode %zu tokens: %.1f ms = %.1f tok/s%s%s]\n",
                      ids.size(), res.prefill_ms, n > 0 ? n - 1 : 0, res.decode_ms,
                      res.decode_ms > 0 ? 1000.0 * (n - 1) / res.decode_ms : 0.0,
-                     res.graph_capture_ms > 0 ? (" | graph capture " + std::to_string(res.graph_capture_ms) + " ms").c_str() : "",
+                     res.graph_capture_ms > 0
+                         ? (" | graph capture " + std::to_string(res.graph_capture_ms) + " ms").c_str()
+                         : "",
                      res.hit_stop ? " | stopped on stop token" : "");
         return 0;
     } catch (const std::exception& e) {

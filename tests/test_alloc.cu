@@ -9,7 +9,7 @@
 // ---- size rounding ----------------------------------------------------------
 
 TEST(alloc_bucket_size_known_values) {
-    const size_t cases[][2] = {{1, 512},    {512, 512},   {513, 640},   {640, 640},   {641, 768},
+    const size_t cases[][2] = {{1, 512},     {512, 512},   {513, 640},   {640, 640},   {641, 768},
                                {1000, 1024}, {1024, 1024}, {1025, 1280}, {4097, 5120}, {1u << 20, 1u << 20}};
     for (auto& c : cases) CHECK(GpuAllocator::bucket_size(c[0]) == c[1]);
 }
@@ -21,7 +21,7 @@ TEST(alloc_bucket_size_is_bounded_waste) {
         size_t b = dist(gen), k = GpuAllocator::bucket_size(b);
         CHECK(k >= b);
         if (b > 512) CHECK(static_cast<double>(k) < 1.25 * static_cast<double>(b) + 1);  // waste < 25%
-        CHECK(GpuAllocator::bucket_size(k) == k);  // a step rounds to itself
+        CHECK(GpuAllocator::bucket_size(k) == k);                                        // a step rounds to itself
     }
 }
 
@@ -45,7 +45,7 @@ TEST(alloc_different_buckets_do_not_mix) {
     if (!a.pooling()) return;
     void* small = a.allocate(1000);  // step 1024
     a.release(small, 1000);
-    void* big = a.allocate(5000);    // another step: must not get the small block
+    void* big = a.allocate(5000);  // another step: must not get the small block
     CHECK(big != small);
     a.release(big, 5000);
 }
@@ -135,7 +135,8 @@ TEST(ops_do_not_read_uninitialized_output_memory) {
     std::vector<float> q = rnd(T * QH * hd, 6), k = rnd(S * KV * hd, 7), v = rnd(S * KV * hd, 8);
     poison_pool({T, QH * hd});
     CHECK(max_abs_diff(attention(Tensor::from_host(q, {T, QH * hd}), Tensor::from_host(k, {S, KV * hd}),
-                                 Tensor::from_host(v, {S, KV * hd}), QH, KV, hd, S - T).to_host(),
+                                 Tensor::from_host(v, {S, KV * hd}), QH, KV, hd, S - T)
+                           .to_host(),
                        cpu_attention(q, k, v, T, S, QH, KV, hd, S - T)) < 1e-5);
 
     // transpose
@@ -183,9 +184,9 @@ TEST(arena_serves_allocations_and_ignores_releases) {
     }
     CHECK(!a.arena_active());
     CHECK(a.stats().arena_allocs == before.arena_allocs + 2);
-    CHECK(a.stats().cuda_mallocs == before.cuda_mallocs);      // no cudaMalloc from the arena
-    CHECK(a.stats().bytes_cached == before.bytes_cached);      // and nothing went to the pool
-    a.release(p2, 5000);                                       // also ignored after the scope
+    CHECK(a.stats().cuda_mallocs == before.cuda_mallocs);  // no cudaMalloc from the arena
+    CHECK(a.stats().bytes_cached == before.bytes_cached);  // and nothing went to the pool
+    a.release(p2, 5000);                                   // also ignored after the scope
     CHECK(a.stats().bytes_cached == before.bytes_cached);
     CHECK(a.stats().bytes_in_use == before.bytes_in_use);
 }

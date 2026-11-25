@@ -124,14 +124,13 @@ public:
     // Only switch while no tensors are alive: the block size depends on the mode.
     void set_pooling(bool on) {
         std::lock_guard<std::mutex> lock(mu_);
-        if (stats_.bytes_in_use != 0)
-            throw std::runtime_error("GpuAllocator::set_pooling: tensors are still alive");
+        if (stats_.bytes_in_use != 0) throw std::runtime_error("GpuAllocator::set_pooling: tensors are still alive");
         trim_locked();
         pooling_ = on;
     }
     bool pooling() const { return pooling_; }
 
-        // All following allocate() calls are served from the arena (until end_arena). Graph capture only.
+    // All following allocate() calls are served from the arena (until end_arena). Graph capture only.
     void begin_arena(GpuArena* a) {
         std::lock_guard<std::mutex> lock(mu_);
         if (active_arena_) throw std::runtime_error("GpuAllocator::begin_arena: an arena is already active");

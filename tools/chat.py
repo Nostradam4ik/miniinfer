@@ -6,6 +6,7 @@ Example:
 The tokenizer is loaded from model/ (saved there by tools/export_reference.py).
 This is a base model (not instruct): it continues text, it does not answer questions.
 """
+
 import argparse
 import os
 import subprocess
@@ -24,8 +25,12 @@ def main():
     ap.add_argument("--top-k", type=int, default=0)
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--dtype", choices=["f32", "f16", "bf16"], default="bf16",
-                    help="weight format (bf16: half the memory, no precision loss)")
+    ap.add_argument(
+        "--dtype",
+        choices=["f32", "f16", "bf16"],
+        default="bf16",
+        help="weight format (bf16: half the memory, no precision loss)",
+    )
     ap.add_argument("--no-graph", action="store_true", help="do not use a CUDA graph for decoding")
     ap.add_argument("--exe", default=os.path.join(ROOT, "build", "generate.exe"))
     ap.add_argument("--model", default=os.path.join(ROOT, "model"))
@@ -39,11 +44,23 @@ def main():
         sys.exit("empty prompt")
 
     cmd = [
-        args.exe, "--model", args.model,
-        "--ids", " ".join(map(str, ids)),
-        "--max", str(args.max), "--temp", str(args.temp),
-        "--top-k", str(args.top_k), "--top-p", str(args.top_p), "--seed", str(args.seed),
-        "--dtype", args.dtype,
+        args.exe,
+        "--model",
+        args.model,
+        "--ids",
+        " ".join(map(str, ids)),
+        "--max",
+        str(args.max),
+        "--temp",
+        str(args.temp),
+        "--top-k",
+        str(args.top_k),
+        "--top-p",
+        str(args.top_p),
+        "--seed",
+        str(args.seed),
+        "--dtype",
+        args.dtype,
     ]
     if not args.no_graph:
         cmd.append("--graph")
@@ -64,7 +81,7 @@ def main():
         text = tok.decode(generated)
         if text.endswith("�"):
             continue
-        print(text[len(printed):], end="", flush=True)
+        print(text[len(printed) :], end="", flush=True)
         printed = text
     print()
 

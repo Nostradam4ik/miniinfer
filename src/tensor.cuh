@@ -22,11 +22,9 @@ public:
 
     static Tensor from_host(const std::vector<float>& host, std::vector<int> shape) {
         Tensor t = uninitialized(std::move(shape));
-        if (host.size() != t.numel_)
-            throw std::invalid_argument("Tensor::from_host: size does not match shape");
+        if (host.size() != t.numel_) throw std::invalid_argument("Tensor::from_host: size does not match shape");
         if (t.numel_ > 0)
-            CUDA_CHECK(cudaMemcpy(t.data_, host.data(), t.numel_ * sizeof(float),
-                                  cudaMemcpyHostToDevice));
+            CUDA_CHECK(cudaMemcpy(t.data_, host.data(), t.numel_ * sizeof(float), cudaMemcpyHostToDevice));
         return t;
     }
 
@@ -35,8 +33,7 @@ public:
     Tensor(const Tensor&) = delete;
     Tensor& operator=(const Tensor&) = delete;
 
-    Tensor(Tensor&& o) noexcept
-        : data_(o.data_), numel_(o.numel_), shape_(std::move(o.shape_)) {
+    Tensor(Tensor&& o) noexcept : data_(o.data_), numel_(o.numel_), shape_(std::move(o.shape_)) {
         o.data_ = nullptr;
         o.numel_ = 0;
     }
@@ -54,9 +51,7 @@ public:
 
     std::vector<float> to_host() const {
         std::vector<float> h(numel_);
-        if (numel_ > 0)
-            CUDA_CHECK(cudaMemcpy(h.data(), data_, numel_ * sizeof(float),
-                                  cudaMemcpyDeviceToHost));
+        if (numel_ > 0) CUDA_CHECK(cudaMemcpy(h.data(), data_, numel_ * sizeof(float), cudaMemcpyDeviceToHost));
         return h;
     }
 
@@ -95,8 +90,12 @@ private:
 // and are converted to fp32 on the fly during multiplication (accumulation is also in fp32).
 enum class DType { F32, F16, BF16 };
 
-inline size_t dtype_size(DType t) { return t == DType::F32 ? 4 : 2; }
-inline const char* dtype_name(DType t) { return t == DType::F32 ? "f32" : t == DType::F16 ? "f16" : "bf16"; }
+inline size_t dtype_size(DType t) {
+    return t == DType::F32 ? 4 : 2;
+}
+inline const char* dtype_name(DType t) {
+    return t == DType::F32 ? "f32" : t == DType::F16 ? "f16" : "bf16";
+}
 
 // A lightweight, non-owning description of a weight matrix [rows x cols] in GPU memory. Converts
 // implicitly from Tensor (fp32), so operations taking a WeightRef work with old call sites

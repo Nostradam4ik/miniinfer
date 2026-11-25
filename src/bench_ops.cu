@@ -28,10 +28,14 @@ int main() {
     }
 
     // --- 2) matmul with M = 1 at real shapes (K x N), fp32 ---
-    struct Shape { const char* name; int K, N; int count_per_token; };
-    const Shape shapes[] = {{"q_proj    576x576  ", 576, 576, 30},   {"k_proj    576x192  ", 576, 192, 30},
-                            {"v_proj    576x192  ", 576, 192, 30},   {"o_proj    576x576  ", 576, 576, 30},
-                            {"gate/up   576x1536 ", 576, 1536, 60},  {"down     1536x576  ", 1536, 576, 30},
+    struct Shape {
+        const char* name;
+        int K, N;
+        int count_per_token;
+    };
+    const Shape shapes[] = {{"q_proj    576x576  ", 576, 576, 30},  {"k_proj    576x192  ", 576, 192, 30},
+                            {"v_proj    576x192  ", 576, 192, 30},  {"o_proj    576x576  ", 576, 576, 30},
+                            {"gate/up   576x1536 ", 576, 1536, 60}, {"down     1536x576  ", 1536, 576, 30},
                             {"lm_head   576x49152", 576, 49152, 1}};
     // "via Tensor" = as in the model (output taken from the pool + launch);
     // "raw launch" = only the kernel launch on ready buffers. If the raw launch is much faster, the time
@@ -66,8 +70,8 @@ int main() {
         std::printf("%-20s %9.1f us %9.1f us %9.1f us %12.1f %10d\n", s.name, us_tensor, us_raw, us_gemv, gbs,
                     s.count_per_token);
     }
-    std::printf("\ntotal matmul per token: via Tensor (Auto) %.2f ms | reg %.2f ms | gemv %.2f ms\n",
-                total_tensor_ms, total_raw_ms, total_gemv_ms);
+    std::printf("\ntotal matmul per token: via Tensor (Auto) %.2f ms | reg %.2f ms | gemv %.2f ms\n", total_tensor_ms,
+                total_raw_ms, total_gemv_ms);
     std::printf("(theoretical memory floor for fp32: ~2.1 ms for all weights)\n");
     return 0;
 }

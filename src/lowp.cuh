@@ -13,8 +13,8 @@
 
 struct LowpStats {
     size_t elements = 0;
-    size_t overflow = 0;     // a finite value became inf (outside the range of the format)
-    size_t flushed = 0;      // a non-zero value became zero
+    size_t overflow = 0;       // a finite value became inf (outside the range of the format)
+    size_t flushed = 0;        // a non-zero value became zero
     double max_rel_error = 0;  // largest relative rounding error among finite non-zero values
 
     void merge(const LowpStats& o) {

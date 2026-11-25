@@ -11,8 +11,7 @@
 
 // cuBLAS works in column-major order, so swap A and B:
 // (A*B)^T = B^T * A^T, and the row-major C comes out without any transpose.
-static void cublas_matmul(cublasHandle_t h, const float* A, const float* B, float* C,
-                          int n) {
+static void cublas_matmul(cublasHandle_t h, const float* A, const float* B, float* C, int n) {
     const float alpha = 1.f, beta = 0.f;
     cublasSgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, n, n, n, &alpha, B, n, A, n, &beta, C, n);
 }
@@ -50,8 +49,8 @@ int main(int argc, char** argv) {
         float ms = timer.stop() / iters;
         CUDA_CHECK(cudaGetLastError());
         CUDA_CHECK(cudaMemcpy(out.data(), dC, bytes, cudaMemcpyDeviceToHost));
-        std::printf("%-7s: %8.3f ms  %8.1f GFLOPS  max_diff=%.2e\n", name, ms,
-                    flops / (ms * 1e-3) / 1e9, max_abs_diff(out, ref));
+        std::printf("%-7s: %8.3f ms  %8.1f GFLOPS  max_diff=%.2e\n", name, ms, flops / (ms * 1e-3) / 1e9,
+                    max_abs_diff(out, ref));
     };
 
     bench("naive", [&] { launch_matmul(MatmulKind::Naive, dA, dB, dC, n, n, n); });

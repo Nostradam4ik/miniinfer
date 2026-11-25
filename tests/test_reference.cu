@@ -39,8 +39,7 @@ Ref* load_ref() {
     return r;
 }
 
-void check_close(const char* what, const std::vector<float>& got, const std::vector<float>& want,
-                 double tol) {
+void check_close(const char* what, const std::vector<float>& got, const std::vector<float>& want, double tol) {
     double d = max_abs_diff(got, want);
     if (!(d <= tol)) {
         std::ostringstream os;
@@ -64,32 +63,33 @@ TEST(ref_layer0_input_rmsnorm_matches_pytorch) {
     if (!r) return;
     Tensor x = r->ref.to_gpu("embed_out");
     Tensor w = r->weights.to_gpu("model.layers.0.input_layernorm.weight");
-    check_close("l0.input_norm", rmsnorm(x, w, r->eps).to_host(), r->ref.floats("l0.input_norm"),
-                1e-5);
+    check_close("l0.input_norm", rmsnorm(x, w, r->eps).to_host(), r->ref.floats("l0.input_norm"), 1e-5);
 }
 
 // Q/K/V projections of layer 0: matmul with the weights. In PyTorch the weight is [out x in], y = x * W^T,
 // so the weights are transposed with the transpose kernel.
 namespace {
-Tensor transposed(const Tensor& w) { return transpose(w); }
+Tensor transposed(const Tensor& w) {
+    return transpose(w);
+}
 }  // namespace
 
 TEST(ref_layer0_rope_matches_pytorch) {
     Ref* r = load_ref();
     if (!r) return;
     const float theta = 100000.f;
-    check_close("l0.q_rope", rope(r->ref.to_gpu("l0.q_proj"), 9, 64, theta).to_host(),
-                r->ref.floats("l0.q_rope"), 1e-5);
-    check_close("l0.k_rope", rope(r->ref.to_gpu("l0.k_proj"), 3, 64, theta).to_host(),
-                r->ref.floats("l0.k_rope"), 1e-5);
+    check_close("l0.q_rope", rope(r->ref.to_gpu("l0.q_proj"), 9, 64, theta).to_host(), r->ref.floats("l0.q_rope"),
+                1e-5);
+    check_close("l0.k_rope", rope(r->ref.to_gpu("l0.k_proj"), 3, 64, theta).to_host(), r->ref.floats("l0.k_rope"),
+                1e-5);
 }
 
 // Attention context (before o_proj) from the reference q_rope, k_rope, v_proj.
 TEST(ref_layer0_attention_matches_pytorch) {
     Ref* r = load_ref();
     if (!r) return;
-    Tensor out = attention(r->ref.to_gpu("l0.q_rope"), r->ref.to_gpu("l0.k_rope"),
-                           r->ref.to_gpu("l0.v_proj"), 9, 3, 64);
+    Tensor out =
+        attention(r->ref.to_gpu("l0.q_rope"), r->ref.to_gpu("l0.k_rope"), r->ref.to_gpu("l0.v_proj"), 9, 3, 64);
     check_close("l0.attn_ctx", out.to_host(), r->ref.floats("l0.attn_ctx"), 1e-5);
 }
 
@@ -124,8 +124,8 @@ TEST(ref_layer0_mlp_matches_pytorch) {
     Ref* r = load_ref();
     if (!r) return;
     LayerWeights w = load_layer(r->weights, 0);
-    check_close("l0.mlp_out", mlp_forward(r->ref.to_gpu("l0.post_norm"), w).to_host(),
-                r->ref.floats("l0.mlp_out"), 1e-4);
+    check_close("l0.mlp_out", mlp_forward(r->ref.to_gpu("l0.post_norm"), w).to_host(), r->ref.floats("l0.mlp_out"),
+                1e-4);
 }
 
 // The whole layer 0 from the reference embedding: output = hidden_states.1 = l0.out.
@@ -181,8 +181,7 @@ const Model& shared_model() {
 std::vector<int> top_k(const float* row, int n, int k) {
     std::vector<int> idx(n);
     for (int i = 0; i < n; ++i) idx[i] = i;
-    std::partial_sort(idx.begin(), idx.begin() + k, idx.end(),
-                      [&](int a, int b) { return row[a] > row[b]; });
+    std::partial_sort(idx.begin(), idx.begin() + k, idx.end(), [&](int a, int b) { return row[a] > row[b]; });
     idx.resize(k);
     return idx;
 }
@@ -212,8 +211,7 @@ TEST(ref_full_model_logits_match_pytorch) {
         std::vector<int> b = top_k(&want[static_cast<size_t>(t) * V], V, 5);
         if (a != b) {
             std::ostringstream os;
-            os << "position " << t << ": top-5 tokens differ (our top1=" << a[0]
-               << ", PyTorch top1=" << b[0] << ")";
+            os << "position " << t << ": top-5 tokens differ (our top1=" << a[0] << ", PyTorch top1=" << b[0] << ")";
             throw TestFailure(os.str());
         }
     }
@@ -281,11 +279,11 @@ TEST(model_cache_full_throws_and_reset_works) {
     KVCache cache(m.cfg, 4);
     m.forward_cached({1, 2, 3}, cache);
     CHECK_THROWS(m.forward_cached({4, 5}, cache));  // 3 + 2 > 4
-    CHECK(cache.length == 3);                        // a failure does not corrupt the state
-    m.forward_cached({4}, cache);                    // exactly up to the edge
+    CHECK(cache.length == 3);                       // a failure does not corrupt the state
+    m.forward_cached({4}, cache);                   // exactly up to the edge
     CHECK_THROWS(m.forward_cached({5}, cache));
     cache.reset();
-    m.forward_cached({1, 2, 3, 4}, cache);           // available again after reset
+    m.forward_cached({1, 2, 3, 4}, cache);  // available again after reset
 }
 
 // ---- generation -------------------------------------------------------------
@@ -313,13 +311,12 @@ TEST(ref_greedy_generation_matches_pytorch) {
             size_t i = 0;
             while (i < res.tokens.size() && i < want.size() && res.tokens[i] == want[i]) ++i;
             std::ostringstream os;
-            os << key << ": mismatch at new token " << i << " (ours "
-               << (i < res.tokens.size() ? res.tokens[i] : -1) << ", PyTorch "
-               << (i < want.size() ? want[i] : -1) << ")";
+            os << key << ": mismatch at new token " << i << " (ours " << (i < res.tokens.size() ? res.tokens[i] : -1)
+               << ", PyTorch " << (i < want.size() ? want[i] : -1) << ")";
             throw TestFailure(os.str());
         }
-        std::printf("       %s: %zu tokens match; prefill %.1f ms, decode %.1f ms/token\n", key,
-                    want.size(), res.prefill_ms, res.decode_ms / std::max<size_t>(1, want.size() - 1));
+        std::printf("       %s: %zu tokens match; prefill %.1f ms, decode %.1f ms/token\n", key, want.size(),
+                    res.prefill_ms, res.decode_ms / std::max<size_t>(1, want.size() - 1));
     }
 }
 
@@ -344,12 +341,12 @@ TEST(generate_edge_cases) {
     Ref* r = load_ref();
     if (!r) return;
     const Model& m = shared_model();
-    CHECK(greedy(m, {504}, 0).tokens.empty());           // 0 new tokens
-    CHECK(greedy(m, {504}, 1).tokens.size() == 1);       // exactly one
-    CHECK_THROWS(greedy(m, {}, 5));                      // empty prompt
+    CHECK(greedy(m, {504}, 0).tokens.empty());      // 0 new tokens
+    CHECK(greedy(m, {504}, 1).tokens.size() == 1);  // exactly one
+    CHECK_THROWS(greedy(m, {}, 5));                 // empty prompt
     CHECK_THROWS(greedy(m, {504}, -1));
     CHECK_THROWS(greedy(m, std::vector<int>(10, 504), kMaxAttentionKeys));  // does not fit
-    CHECK_THROWS(greedy(m, {m.cfg.vocab_size}, 3));      // id outside the vocabulary
+    CHECK_THROWS(greedy(m, {m.cfg.vocab_size}, 3));                         // id outside the vocabulary
 }
 
 // Seeded sampling is reproducible, and top_k=1 gives the same as greedy.
@@ -400,8 +397,10 @@ TEST(ref_lowp_conversion_stats_and_memory) {
         std::printf("       %s: %zu elements, %zu overflow, %zu flushed to zero, max relative error %.2e\n",
                     dtype_name(dt), s.elements, s.overflow, s.flushed, s.max_rel_error);
         CHECK(s.overflow == 0);
-        if (dt == DType::BF16) CHECK(s.max_rel_error == 0.0 && s.flushed == 0);  // the checkpoint is already bf16
-        else CHECK(s.flushed < 1000);  // fp16: a few tiny weights become zero
+        if (dt == DType::BF16)
+            CHECK(s.max_rel_error == 0.0 && s.flushed == 0);  // the checkpoint is already bf16
+        else
+            CHECK(s.flushed < 1000);  // fp16: a few tiny weights become zero
     }
 }
 
@@ -431,7 +430,8 @@ TEST(ref_lowp_greedy_generation_matches_pytorch) {
     TensorFile gen(std::string(MINIINFER_ROOT) + "/reference/generation");
     for (DType dt : {DType::F16, DType::BF16})
         for (const char* key : {"gen1", "gen2"}) {
-            std::vector<int> prompt = gen.ints(std::string(key) + ".prompt"), want = gen.ints(std::string(key) + ".new");
+            std::vector<int> prompt = gen.ints(std::string(key) + ".prompt"),
+                             want = gen.ints(std::string(key) + ".new");
             GenerateResult res = greedy(lowp_model(dt), prompt, static_cast<int>(want.size()));
             if (res.tokens != want) {
                 size_t i = 0;
@@ -440,8 +440,8 @@ TEST(ref_lowp_greedy_generation_matches_pytorch) {
                 os << dtype_name(dt) << " " << key << ": mismatch at new token " << i;
                 throw TestFailure(os.str());
             }
-            std::printf("       %s %s: %zu tokens match, decode %.2f ms/token\n", dtype_name(dt), key,
-                        want.size(), res.decode_ms / std::max<size_t>(1, want.size() - 1));
+            std::printf("       %s %s: %zu tokens match, decode %.2f ms/token\n", dtype_name(dt), key, want.size(),
+                        res.decode_ms / std::max<size_t>(1, want.size() - 1));
         }
 }
 
@@ -464,7 +464,10 @@ TEST(ref_layer0_qkv_projections_match_pytorch) {
     Ref* r = load_ref();
     if (!r) return;
     Tensor x = r->ref.to_gpu("l0.input_norm");
-    struct P { const char* w; const char* out; };
+    struct P {
+        const char* w;
+        const char* out;
+    };
     const P projs[] = {{"model.layers.0.self_attn.q_proj.weight", "l0.q_proj"},
                        {"model.layers.0.self_attn.k_proj.weight", "l0.k_proj"},
                        {"model.layers.0.self_attn.v_proj.weight", "l0.v_proj"}};

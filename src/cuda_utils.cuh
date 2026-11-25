@@ -4,14 +4,13 @@
 #include <cuda_runtime.h>
 
 // Without this check CUDA errors are silent.
-#define CUDA_CHECK(call)                                                     \
-    do {                                                                     \
-        cudaError_t err__ = (call);                                          \
-        if (err__ != cudaSuccess) {                                          \
-            std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__,         \
-                         __LINE__, cudaGetErrorString(err__));               \
-            std::exit(EXIT_FAILURE);                                         \
-        }                                                                    \
+#define CUDA_CHECK(call)                                                                                   \
+    do {                                                                                                   \
+        cudaError_t err__ = (call);                                                                        \
+        if (err__ != cudaSuccess) {                                                                        \
+            std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err__)); \
+            std::exit(EXIT_FAILURE);                                                                       \
+        }                                                                                                  \
     } while (0)
 
 // The CUDA stream the library submits kernel launches to. Defaults to 0 (the default stream);
@@ -21,7 +20,9 @@ inline cudaStream_t& exec_stream_ref() {
     static thread_local cudaStream_t s = 0;
     return s;
 }
-inline cudaStream_t exec_stream() { return exec_stream_ref(); }
+inline cudaStream_t exec_stream() {
+    return exec_stream_ref();
+}
 
 // Temporarily makes s the execution stream (the destructor restores the previous one, even on exceptions).
 class ScopedStream {

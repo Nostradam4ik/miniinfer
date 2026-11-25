@@ -30,10 +30,12 @@ std::string describe(const char* what, int M, int K, int N, double d) {
     return os.str();
 }
 
-struct Shape { int M, K, N; };
+struct Shape {
+    int M, K, N;
+};
 // M = 1..4 -> fused kernel; M = 5, 9 -> fallback (several operations). Both must give the same result.
-const Shape kShapes[] = {{1, 1, 1},     {1, 7, 5},     {1, 16, 32},   {1, 33, 33},   {1, 576, 192}, {1, 576, 576},
-                         {1, 1536, 576}, {1, 576, 1536}, {2, 100, 65}, {4, 64, 64},  {5, 576, 192}, {9, 33, 70}};
+const Shape kShapes[] = {{1, 1, 1},      {1, 7, 5},      {1, 16, 32},  {1, 33, 33}, {1, 576, 192}, {1, 576, 576},
+                         {1, 1536, 576}, {1, 576, 1536}, {2, 100, 65}, {4, 64, 64}, {5, 576, 192}, {9, 33, 70}};
 }  // namespace
 
 TEST(fused_rmsnorm_matmul_matches_cpu) {
@@ -52,7 +54,8 @@ TEST(fused_rmsnorm_matmul_matches_cpu) {
 
 TEST(fused_matmul_residual_matches_cpu) {
     for (const Shape& s : kShapes) {
-        std::vector<float> x = rnd(static_cast<size_t>(s.M) * s.K, 4 + s.K), w = rnd(static_cast<size_t>(s.K) * s.N, 5 + s.N);
+        std::vector<float> x = rnd(static_cast<size_t>(s.M) * s.K, 4 + s.K),
+                           w = rnd(static_cast<size_t>(s.K) * s.N, 5 + s.N);
         std::vector<float> res = rnd(static_cast<size_t>(s.M) * s.N, 6 + s.M, 5.f);
         std::vector<float> ref = cpu_matmul(x, w, s.M, s.N, s.K);
         for (size_t i = 0; i < ref.size(); ++i) ref[i] += res[i];
@@ -67,10 +70,12 @@ TEST(fused_matmul_residual_matches_cpu) {
 TEST(fused_rmsnorm_gate_up_matches_cpu) {
     for (const Shape& s : kShapes) {
         std::vector<float> x = rnd(static_cast<size_t>(s.M) * s.K, 7 + s.K, 3.f), nw = rnd(s.K, 8 + s.N);
-        std::vector<float> wg = rnd(static_cast<size_t>(s.K) * s.N, 9 + s.M), wu = rnd(static_cast<size_t>(s.K) * s.N, 10 + s.M);
+        std::vector<float> wg = rnd(static_cast<size_t>(s.K) * s.N, 9 + s.M),
+                           wu = rnd(static_cast<size_t>(s.K) * s.N, 10 + s.M);
         std::vector<float> h = cpu_rmsnorm(x, nw, s.M, s.K, 1e-5f);
         std::vector<float> g = cpu_matmul(h, wg, s.M, s.N, s.K), u = cpu_matmul(h, wu, s.M, s.N, s.K), ref(g.size());
-        for (size_t i = 0; i < g.size(); ++i) ref[i] = static_cast<float>(g[i] / (1.0 + std::exp(-static_cast<double>(g[i]))) * u[i]);
+        for (size_t i = 0; i < g.size(); ++i)
+            ref[i] = static_cast<float>(g[i] / (1.0 + std::exp(-static_cast<double>(g[i]))) * u[i]);
         poison_pool({s.M, s.N});
         Tensor out = rmsnorm_gate_up(Tensor::from_host(x, {s.M, s.K}), Tensor::from_host(nw, {s.K}), 1e-5f,
                                      Tensor::from_host(wg, {s.K, s.N}), Tensor::from_host(wu, {s.K, s.N}));
@@ -87,16 +92,17 @@ TEST(fused_path_and_fallback_agree_on_same_row) {
     std::vector<float> one = rmsnorm_matmul(Tensor::from_host(row, {1, K}), NW, 1e-5f, W).to_host();  // fused
     std::vector<float> many;
     for (int i = 0; i < kGemvMaxRows + 1; ++i) many.insert(many.end(), row.begin(), row.end());
-    std::vector<float> big = rmsnorm_matmul(Tensor::from_host(many, {kGemvMaxRows + 1, K}), NW, 1e-5f, W).to_host();  // fallback
+    std::vector<float> big =
+        rmsnorm_matmul(Tensor::from_host(many, {kGemvMaxRows + 1, K}), NW, 1e-5f, W).to_host();  // fallback
     std::vector<float> first(big.begin(), big.begin() + N);
     CHECK(max_abs_diff(one, first) < 1e-3);
 }
 
 TEST(fused_ops_validate_shapes) {
     Tensor x({2, 4}), w({4, 3}), nw({4}), res({2, 3});
-    CHECK_THROWS(rmsnorm_matmul(x, Tensor({5}), 1e-5f, w));       // norm_w has the wrong size
-    CHECK_THROWS(rmsnorm_matmul(x, nw, 1e-5f, Tensor({5, 3})));   // K does not match
-    CHECK_THROWS(matmul_residual(x, w, Tensor({2, 4})));          // residual has the wrong size
+    CHECK_THROWS(rmsnorm_matmul(x, Tensor({5}), 1e-5f, w));      // norm_w has the wrong size
+    CHECK_THROWS(rmsnorm_matmul(x, nw, 1e-5f, Tensor({5, 3})));  // K does not match
+    CHECK_THROWS(matmul_residual(x, w, Tensor({2, 4})));         // residual has the wrong size
     CHECK_THROWS(matmul_residual(x, Tensor({5, 3}), res));
     CHECK_THROWS(rmsnorm_gate_up(x, nw, 1e-5f, w, Tensor({4, 2})));  // Wg and Wu differ
     CHECK_THROWS(rmsnorm_gate_up(x, Tensor({3}), 1e-5f, w, w));
@@ -114,9 +120,15 @@ std::vector<float> cols(const std::vector<float>& m, int rows, int width, int fr
 }  // namespace
 
 TEST(rope_qkv_to_cache_matches_separate_ops) {
-    struct S { int T, H, KV, hd, pos, max_seq; float theta; };
-    const S shapes[] = {{1, 1, 1, 2, 0, 4, 10000.f},  {1, 9, 3, 64, 17, 40, 100000.f}, {5, 9, 3, 64, 0, 8, 100000.f},
-                        {3, 4, 2, 8, 5, 10, 10000.f}, {7, 2, 1, 16, 20, 30, 500.f}};
+    struct S {
+        int T, H, KV, hd, pos, max_seq;
+        float theta;
+    };
+    const S shapes[] = {{1, 1, 1, 2, 0, 4, 10000.f},
+                        {1, 9, 3, 64, 17, 40, 100000.f},
+                        {5, 9, 3, 64, 0, 8, 100000.f},
+                        {3, 4, 2, 8, 5, 10, 10000.f},
+                        {7, 2, 1, 16, 20, 30, 500.f}};
     for (const S& s : shapes) {
         const int width = (s.H + 2 * s.KV) * s.hd, kv_dim = s.KV * s.hd;
         std::vector<float> qkv = rnd(static_cast<size_t>(s.T) * width, 11 + s.T);
@@ -125,8 +137,10 @@ TEST(rope_qkv_to_cache_matches_separate_ops) {
         const std::vector<float> v = cols(qkv, s.T, width, (s.H + s.KV) * s.hd, width);
 
         // a cache full of NaN: check that exactly rows pos..pos+T-1 are written and nothing else
-        Tensor ck = Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")), {s.max_seq, kv_dim});
-        Tensor cv = Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")), {s.max_seq, kv_dim});
+        Tensor ck = Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")),
+                                      {s.max_seq, kv_dim});
+        Tensor cv = Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")),
+                                      {s.max_seq, kv_dim});
         poison_pool({s.T, s.H * s.hd});
         Tensor q_out = rope_qkv_to_cache(Tensor::from_host(qkv, {s.T, width}), s.H, s.KV, s.hd, s.theta, s.pos, ck, cv);
 
@@ -201,7 +215,9 @@ struct DevInts {
 }  // namespace
 
 TEST(attention_with_device_position_is_bitwise_equal_to_host_position) {
-    struct S { int T, S, H, KV, hd, pos; };
+    struct S {
+        int T, S, H, KV, hd, pos;
+    };
     const S shapes[] = {{1, 10, 9, 3, 64, 6}, {1, 64, 4, 2, 8, 63}, {1, 7, 2, 1, 16, 0}, {3, 20, 6, 2, 16, 12}};
     for (const S& s : shapes) {
         Tensor q = Tensor::from_host(rnd(static_cast<size_t>(s.T) * s.H * s.hd, 1, 2.f), {s.T, s.H * s.hd});
@@ -218,7 +234,8 @@ TEST(attention_with_device_position_is_bitwise_equal_to_host_position) {
 TEST(attention_with_out_of_range_device_position_returns_nan) {
     const int S = 10, H = 2, KV = 1, hd = 8;
     Tensor q = Tensor::from_host(rnd(H * hd, 1), {1, H * hd});
-    Tensor k = Tensor::from_host(rnd(S * KV * hd, 2), {S, KV * hd}), v = Tensor::from_host(rnd(S * KV * hd, 3), {S, KV * hd});
+    Tensor k = Tensor::from_host(rnd(S * KV * hd, 2), {S, KV * hd}),
+           v = Tensor::from_host(rnd(S * KV * hd, 3), {S, KV * hd});
     for (int bad : {S, S + 5, -1, -100}) {
         DevInts pos({bad});
         for (float x : attention(q, k, v, H, KV, hd, 0, pos.p).to_host()) CHECK(std::isnan(x));
@@ -228,18 +245,24 @@ TEST(attention_with_out_of_range_device_position_returns_nan) {
 }
 
 TEST(rope_qkv_with_device_position_is_bitwise_equal_to_host_position) {
-    struct S { int T, H, KV, hd, pos, max_seq; };
+    struct S {
+        int T, H, KV, hd, pos, max_seq;
+    };
     const S shapes[] = {{1, 9, 3, 64, 17, 40}, {1, 4, 2, 8, 0, 4}, {3, 2, 1, 16, 5, 10}};
     for (const S& s : shapes) {
         const int width = (s.H + 2 * s.KV) * s.hd, kv_dim = s.KV * s.hd;
         std::vector<float> qkv = rnd(static_cast<size_t>(s.T) * width, 7);
         auto nan_cache = [&] {
-            return Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")), {s.max_seq, kv_dim});
+            return Tensor::from_host(std::vector<float>(static_cast<size_t>(s.max_seq) * kv_dim, std::nanf("")),
+                                     {s.max_seq, kv_dim});
         };
         Tensor ck1 = nan_cache(), cv1 = nan_cache(), ck2 = nan_cache(), cv2 = nan_cache();
         DevInts pos({s.pos});
-        std::vector<float> q1 = rope_qkv_to_cache(Tensor::from_host(qkv, {s.T, width}), s.H, s.KV, s.hd, 1e5f, s.pos, ck1, cv1).to_host();
-        std::vector<float> q2 = rope_qkv_to_cache(Tensor::from_host(qkv, {s.T, width}), s.H, s.KV, s.hd, 1e5f, 0, ck2, cv2, pos.p).to_host();
+        std::vector<float> q1 =
+            rope_qkv_to_cache(Tensor::from_host(qkv, {s.T, width}), s.H, s.KV, s.hd, 1e5f, s.pos, ck1, cv1).to_host();
+        std::vector<float> q2 =
+            rope_qkv_to_cache(Tensor::from_host(qkv, {s.T, width}), s.H, s.KV, s.hd, 1e5f, 0, ck2, cv2, pos.p)
+                .to_host();
         CHECK(q1 == q2);
         // bitwise comparison of the caches (NaN != NaN, so compare as bytes)
         std::vector<float> a = ck1.to_host(), b = ck2.to_host(), c = cv1.to_host(), d = cv2.to_host();
@@ -294,11 +317,14 @@ TEST(rope_qkv_device_position_never_writes_outside_the_cache) {
     Tensor q_out = Tensor::from_host(std::vector<float>(H * hd, 0.f), {1, H * hd});
     // a few valid positions and many bad ones, chosen so that a wrong write would stay within the frame
     for (int pos : {0, 3, 5, cache_rows, cache_rows + 1, cache_rows + pad - 1, -1, -pad + 1}) {
-        Tensor ck = Tensor::from_host(std::vector<float>(static_cast<size_t>(total_rows) * kv_dim, 7.f), {total_rows, kv_dim});
-        Tensor cv = Tensor::from_host(std::vector<float>(static_cast<size_t>(total_rows) * kv_dim, 7.f), {total_rows, kv_dim});
+        Tensor ck =
+            Tensor::from_host(std::vector<float>(static_cast<size_t>(total_rows) * kv_dim, 7.f), {total_rows, kv_dim});
+        Tensor cv =
+            Tensor::from_host(std::vector<float>(static_cast<size_t>(total_rows) * kv_dim, 7.f), {total_rows, kv_dim});
         DevInts d_pos({pos});
         launch_rope_qkv_cache(qkv.data(), q_out.data(), ck.data() + static_cast<size_t>(pad) * kv_dim,
-                              cv.data() + static_cast<size_t>(pad) * kv_dim, 1, H, KV, hd, 1e4f, 0, d_pos.p, cache_rows);
+                              cv.data() + static_cast<size_t>(pad) * kv_dim, 1, H, KV, hd, 1e4f, 0, d_pos.p,
+                              cache_rows);
         CUDA_CHECK(cudaDeviceSynchronize());
         const std::vector<float> hk = ck.to_host(), hv = cv.to_host();
         const bool valid = pos >= 0 && pos < cache_rows;
@@ -309,7 +335,8 @@ TEST(rope_qkv_device_position_never_writes_outside_the_cache) {
                 const float k = hk[static_cast<size_t>(r) * kv_dim + d], v = hv[static_cast<size_t>(r) * kv_dim + d];
                 if (!written_row && (k != 7.f || v != 7.f)) {
                     std::ostringstream os;
-                    os << "pos=" << pos << ": row " << (r - pad) << (in_cache ? " changed (inside the cache)" : " changed (OUTSIDE the cache)");
+                    os << "pos=" << pos << ": row " << (r - pad)
+                       << (in_cache ? " changed (inside the cache)" : " changed (OUTSIDE the cache)");
                     throw TestFailure(os.str());
                 }
             }
@@ -333,6 +360,7 @@ TEST(attention_with_device_position_is_correct_for_large_caches) {
         std::vector<float> host = attention(q, k, v, H, KV, hd, pos).to_host();
         std::vector<float> dev = attention(q, k, v, H, KV, hd, 0, d_pos.p).to_host();
         CHECK(host == dev);
-        CHECK_NEAR(max_abs_diff(dev, cpu_attention(q.to_host(), k.to_host(), v.to_host(), 1, S, H, KV, hd, pos)), 0.0, 1e-5);
+        CHECK_NEAR(max_abs_diff(dev, cpu_attention(q.to_host(), k.to_host(), v.to_host(), 1, S, H, KV, hd, pos)), 0.0,
+                   1e-5);
     }
 }

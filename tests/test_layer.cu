@@ -66,8 +66,7 @@ TEST(layer_mlp_branch_is_residual_plus_mlp) {
     LayerWeights w = random_weights(c, 2);
     w.wo = Tensor({c.num_heads * c.head_dim, c.hidden_size});
     Tensor x = rnd_tensor({5, c.hidden_size}, 7, 1.f);
-    Tensor expect =
-        add(x, mlp_forward(rmsnorm(x, w.post_norm, c.rms_norm_eps), w));
+    Tensor expect = add(x, mlp_forward(rmsnorm(x, w.post_norm, c.rms_norm_eps), w));
     CHECK_NEAR(max_abs_diff(decoder_layer(x, w, c).to_host(), expect.to_host()), 0.0, 0.0);
 }
 
@@ -98,8 +97,7 @@ TEST(layer_depends_on_token_order) {
     std::vector<float> a = decoder_layer(Tensor::from_host(x, {4, H}), w, c).to_host();
     std::vector<float> b = decoder_layer(Tensor::from_host(y, {4, H}), w, c).to_host();
     // the last token sees the same tokens in a different order, so the output must differ
-    CHECK(max_abs_diff(std::vector<float>(a.end() - H, a.end()),
-                       std::vector<float>(b.end() - H, b.end())) > 1e-4);
+    CHECK(max_abs_diff(std::vector<float>(a.end() - H, a.end()), std::vector<float>(b.end() - H, b.end())) > 1e-4);
 }
 
 TEST(layer_output_shape_and_finite) {
@@ -123,8 +121,7 @@ TEST(cached_layer_token_by_token_matches_full) {
     KVCache cache(c, 16);
     for (int t = 0; t < T; ++t) {
         std::vector<float> row(x.begin() + t * H, x.begin() + (t + 1) * H);
-        std::vector<float> out =
-            decoder_layer_cached(Tensor::from_host(row, {1, H}), w, c, cache, 0, t).to_host();
+        std::vector<float> out = decoder_layer_cached(Tensor::from_host(row, {1, H}), w, c, cache, 0, t).to_host();
         std::vector<float> want(full.begin() + t * H, full.begin() + (t + 1) * H);
         if (max_abs_diff(out, want) > 1e-5) {
             std::ostringstream os;
@@ -147,8 +144,7 @@ TEST(cached_layer_chunked_matches_full) {
     int pos = 0;
     for (int n : chunks) {
         std::vector<float> part(x.begin() + pos * H, x.begin() + (pos + n) * H);
-        std::vector<float> out =
-            decoder_layer_cached(Tensor::from_host(part, {n, H}), w, c, cache, 0, pos).to_host();
+        std::vector<float> out = decoder_layer_cached(Tensor::from_host(part, {n, H}), w, c, cache, 0, pos).to_host();
         std::vector<float> want(full.begin() + pos * H, full.begin() + (pos + n) * H);
         CHECK(max_abs_diff(out, want) <= 1e-5);
         pos += n;

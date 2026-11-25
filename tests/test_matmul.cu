@@ -6,15 +6,19 @@
 
 namespace {
 
-const MatmulKind kKinds[] = {MatmulKind::Naive, MatmulKind::Tiled, MatmulKind::Reg, MatmulKind::Gemv,
-                             MatmulKind::Auto};
+const MatmulKind kKinds[] = {MatmulKind::Naive, MatmulKind::Tiled, MatmulKind::Reg, MatmulKind::Gemv, MatmulKind::Auto};
 const char* kind_name(MatmulKind k) {
     switch (k) {
-        case MatmulKind::Naive: return "naive";
-        case MatmulKind::Tiled: return "tiled";
-        case MatmulKind::Reg: return "reg";
-        case MatmulKind::Gemv: return "gemv";
-        default: return "auto";
+        case MatmulKind::Naive:
+            return "naive";
+        case MatmulKind::Tiled:
+            return "tiled";
+        case MatmulKind::Reg:
+            return "reg";
+        case MatmulKind::Gemv:
+            return "gemv";
+        default:
+            return "auto";
     }
 }
 
@@ -47,17 +51,17 @@ TEST(matmul_identity) {
     std::vector<float> a = random_vec(n * n, 1), eye(n * n, 0.f);
     for (int i = 0; i < n; ++i) eye[i * n + i] = 1.f;
     Tensor A = Tensor::from_host(a, {n, n}), I = Tensor::from_host(eye, {n, n});
-    for (MatmulKind k : kKinds)
-        CHECK_NEAR(max_abs_diff(matmul(A, I, k).to_host(), a), 0.0, 1e-6);
+    for (MatmulKind k : kKinds) CHECK_NEAR(max_abs_diff(matmul(A, I, k).to_host(), a), 0.0, 1e-6);
 }
 
 // Various shapes, including ones that are not multiples of the tile size (16 and 64): that is where
 // bounds-check bugs hide.
 TEST(matmul_matches_cpu_for_many_shapes) {
-    struct Shape { int M, K, N; };
-    const Shape shapes[] = {{1, 1, 1},    {1, 7, 5},     {5, 1, 7},   {16, 16, 16},
-                            {17, 33, 65}, {64, 64, 64},  {65, 64, 63}, {100, 200, 50},
-                            {257, 129, 255}, {3, 300, 2}};
+    struct Shape {
+        int M, K, N;
+    };
+    const Shape shapes[] = {{1, 1, 1},    {1, 7, 5},    {5, 1, 7},      {16, 16, 16},    {17, 33, 65},
+                            {64, 64, 64}, {65, 64, 63}, {100, 200, 50}, {257, 129, 255}, {3, 300, 2}};
     for (const Shape& s : shapes) {
         std::vector<float> a = random_vec(static_cast<size_t>(s.M) * s.K, 10 + s.M);
         std::vector<float> b = random_vec(static_cast<size_t>(s.K) * s.N, 20 + s.N);
@@ -69,8 +73,7 @@ TEST(matmul_matches_cpu_for_many_shapes) {
             double diff = max_abs_diff(C.to_host(), ref);
             if (diff > 1e-3) {
                 std::ostringstream os;
-                os << kind_name(k) << " M=" << s.M << " K=" << s.K << " N=" << s.N
-                   << " max_diff=" << diff;
+                os << kind_name(k) << " M=" << s.M << " K=" << s.K << " N=" << s.N << " max_diff=" << diff;
                 throw TestFailure(os.str());
             }
         }
@@ -91,7 +94,9 @@ TEST(matmul_all_kinds_agree) {
 // Without this test such bugs stay hidden, because memory past a buffer is usually zero.
 TEST(matmul_does_not_touch_memory_out_of_bounds) {
     const size_t kPad = 20000;  // comfortably more than a kernel could touch
-    struct Shape { int M, K, N; };
+    struct Shape {
+        int M, K, N;
+    };
     const Shape shapes[] = {{1, 1, 1}, {17, 33, 65}, {65, 20, 63}, {5, 100, 7}, {70, 3, 70}};
     for (const Shape& s : shapes) {
         const size_t na = static_cast<size_t>(s.M) * s.K, nb = static_cast<size_t>(s.K) * s.N,
@@ -124,14 +129,17 @@ TEST(matmul_does_not_touch_memory_out_of_bounds) {
                 if (bits != 0xFFFFFFFFu) ok = false;  // the kernel wrote outside C
             }
             if (!ok) {
-                cudaFree(dA); cudaFree(dB); cudaFree(dC);
+                cudaFree(dA);
+                cudaFree(dB);
+                cudaFree(dC);
                 std::ostringstream os;
-                os << kind_name(k) << " M=" << s.M << " K=" << s.K << " N=" << s.N
-                   << ": out-of-bounds read/write";
+                os << kind_name(k) << " M=" << s.M << " K=" << s.K << " N=" << s.N << ": out-of-bounds read/write";
                 throw TestFailure(os.str());
             }
         }
-        cudaFree(dA); cudaFree(dB); cudaFree(dC);
+        cudaFree(dA);
+        cudaFree(dB);
+        cudaFree(dC);
     }
 }
 
@@ -156,10 +164,12 @@ TEST(matmul_zero_inner_dimension_gives_zeros) {
 
 // Decode shapes: M = 1..5, various N and K, including non-multiples of 32 (block width) and 16 (K split).
 TEST(gemv_matches_cpu_for_decode_shapes) {
-    struct S { int M, K, N; };
-    const S shapes[] = {{1, 1, 1},     {1, 5, 1},     {1, 16, 32},   {1, 17, 33},   {1, 576, 192},
+    struct S {
+        int M, K, N;
+    };
+    const S shapes[] = {{1, 1, 1},     {1, 5, 1},      {1, 16, 32},    {1, 17, 33},    {1, 576, 192},
                         {1, 576, 576}, {1, 1536, 576}, {1, 576, 1536}, {1, 100, 1000}, {2, 33, 65},
-                        {3, 576, 49},  {4, 7, 100},    {5, 64, 64},   {1, 3, 4097}};
+                        {3, 576, 49},  {4, 7, 100},    {5, 64, 64},    {1, 3, 4097}};
     for (const S& s : shapes) {
         std::vector<float> a = random_vec(static_cast<size_t>(s.M) * s.K, 300 + s.K);
         std::vector<float> b = random_vec(static_cast<size_t>(s.K) * s.N, 400 + s.N);

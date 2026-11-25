@@ -36,8 +36,7 @@ int main() {
         float ms = timer.stop();
         CUDA_CHECK(cudaGetLastError());
         // reads 2 arrays and writes 1: 3 * bytes
-        std::printf("block=%4d  %.3f ms  %.1f GB/s\n", block, ms,
-                    3.0 * bytes / (ms * 1e-3) / 1e9);
+        std::printf("block=%4d  %.3f ms  %.1f GB/s\n", block, ms, 3.0 * bytes / (ms * 1e-3) / 1e9);
     }
 
     CUDA_CHECK(cudaMemcpy(h_c.data(), d_c, bytes, cudaMemcpyDeviceToHost));

@@ -7,11 +7,17 @@ template <typename WT>
 __device__ __forceinline__ float wt_to_float(WT v);
 
 template <>
-__device__ __forceinline__ float wt_to_float<float>(float v) { return v; }
+__device__ __forceinline__ float wt_to_float<float>(float v) {
+    return v;
+}
 template <>
-__device__ __forceinline__ float wt_to_float<__half>(__half v) { return __half2float(v); }
+__device__ __forceinline__ float wt_to_float<__half>(__half v) {
+    return __half2float(v);
+}
 template <>
-__device__ __forceinline__ float wt_to_float<__nv_bfloat16>(__nv_bfloat16 v) { return __bfloat162float(v); }
+__device__ __forceinline__ float wt_to_float<__nv_bfloat16>(__nv_bfloat16 v) {
+    return __bfloat162float(v);
+}
 
 // Loads VEC adjacent weight elements at address p and converts them to float.
 // For VEC > 1 the address must be aligned to VEC * sizeof(WT) (the GEMV launchers guarantee it:

@@ -55,9 +55,8 @@ Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightR
 // [Q pairs | K pairs | V elements]; each thread handles one element of its section.
 // The position of the first token comes from pos_ptr (device memory, for the CUDA graph) if not nullptr,
 // otherwise from pos_offset. Cache rows outside [0, cache_rows) are not written (guards a device position).
-__global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck, float* cv, int T, int H,
-                                      int KV, int hd, float theta, int pos_offset, const int* pos_ptr,
-                                      int cache_rows) {
+__global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck, float* cv, int T, int H, int KV,
+                                      int hd, float theta, int pos_offset, const int* pos_ptr, int cache_rows) {
     const long long idx = static_cast<long long>(blockIdx.x) * blockDim.x + threadIdx.x;
     const int pos0 = pos_ptr ? *pos_ptr : pos_offset;
     const int half = hd / 2;
@@ -80,7 +79,8 @@ __global__ void rope_qkv_cache_kernel(const float* qkv, float* q_out, float* ck,
 
         if (!is_q && (pos0 < 0 || pos0 + t >= cache_rows)) return;  // cache row out of range: do not write
 
-        const float* src = qkv + t * row_stride + (is_q ? 0 : static_cast<size_t>(H) * hd) + static_cast<size_t>(h) * hd;
+        const float* src =
+            qkv + t * row_stride + (is_q ? 0 : static_cast<size_t>(H) * hd) + static_cast<size_t>(h) * hd;
         float* dst = is_q ? q_out + (static_cast<size_t>(t) * H + h) * hd
                           : ck + static_cast<size_t>(pos0 + t) * kv_dim + static_cast<size_t>(h) * hd;
 
@@ -111,8 +111,8 @@ void launch_rope_qkv_cache(const float* qkv, float* q_out, float* cache_k, float
     CUDA_CHECK(cudaGetLastError());
 }
 
-Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int head_dim, float theta,
-                         int pos_offset, Tensor& cache_k, Tensor& cache_v, const int* d_pos) {
+Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int head_dim, float theta, int pos_offset,
+                         Tensor& cache_k, Tensor& cache_v, const int* d_pos) {
     if (head_dim <= 0 || head_dim % 2 != 0)
         throw std::invalid_argument("rope_qkv_to_cache: head_dim must be positive and even");
     if (num_heads <= 0 || num_kv_heads <= 0) throw std::invalid_argument("rope_qkv_to_cache: bad head counts");
@@ -124,7 +124,8 @@ Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int
         cache_k.dim(0) != cache_v.dim(0))
         throw std::invalid_argument("rope_qkv_to_cache: cache shape mismatch");
     const int T = qkv.dim(0);
-    if (!d_pos && static_cast<long long>(pos_offset) + T > cache_k.dim(0))  // with d_pos the host does not know the position
+    if (!d_pos &&
+        static_cast<long long>(pos_offset) + T > cache_k.dim(0))  // with d_pos the host does not know the position
         throw std::invalid_argument("rope_qkv_to_cache: rows exceed cache size");
 
     Tensor q = Tensor::uninitialized({T, num_heads * head_dim});

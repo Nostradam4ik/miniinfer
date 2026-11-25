@@ -87,15 +87,25 @@ int main(int argc, char** argv) {
 
     const double launch = time_us([&] { empty_kernel<<<1, 32>>>(); }, 2000);
 
-    struct Row { const char* name; double us; int per_token; };
+    struct Row {
+        const char* name;
+        double us;
+        int per_token;
+    };
     std::vector<Row> rows;
-    rows.push_back({"rmsnorm + QKV gemv     (576->960)", meas([&] { Tensor o = rmsnorm_matmul(x, nw, 1e-5f, ref(wqkv)); }), 30});
-    rows.push_back({"rope + K/V cache write", meas([&] { Tensor o = rope_qkv_to_cache(qkv, NH, NKV, HD, 1e5f, 19, ck, cv); }), 30});
+    rows.push_back(
+        {"rmsnorm + QKV gemv     (576->960)", meas([&] { Tensor o = rmsnorm_matmul(x, nw, 1e-5f, ref(wqkv)); }), 30});
+    rows.push_back({"rope + K/V cache write",
+                    meas([&] { Tensor o = rope_qkv_to_cache(qkv, NH, NKV, HD, 1e5f, 19, ck, cv); }), 30});
     rows.push_back({"attention (S=20, 9 heads)", meas([&] { Tensor o = attention(q, kk, vv, NH, NKV, HD, 19); }), 30});
-    rows.push_back({"o_proj + residual       (576->576)", meas([&] { Tensor o = matmul_residual(ctxt, ref(wo), x); }), 30});
-    rows.push_back({"rmsnorm + gate/up/silu  (576->1536)", meas([&] { Tensor o = rmsnorm_gate_up(x, nw, 1e-5f, ref(wg), ref(wu)); }), 30});
-    rows.push_back({"down + residual         (1536->576)", meas([&] { Tensor o = matmul_residual(act, ref(wd), x); }), 30});
-    rows.push_back({"final norm + lm_head    (576->49152)", meas([&] { Tensor o = rmsnorm_matmul(x, nw, 1e-5f, ref(wlm)); }), 1});
+    rows.push_back(
+        {"o_proj + residual       (576->576)", meas([&] { Tensor o = matmul_residual(ctxt, ref(wo), x); }), 30});
+    rows.push_back({"rmsnorm + gate/up/silu  (576->1536)",
+                    meas([&] { Tensor o = rmsnorm_gate_up(x, nw, 1e-5f, ref(wg), ref(wu)); }), 30});
+    rows.push_back(
+        {"down + residual         (1536->576)", meas([&] { Tensor o = matmul_residual(act, ref(wd), x); }), 30});
+    rows.push_back(
+        {"final norm + lm_head    (576->49152)", meas([&] { Tensor o = rmsnorm_matmul(x, nw, 1e-5f, ref(wlm)); }), 1});
     std::vector<int> ids = {504};
     Tensor table({V, H});
     LowpMatrix table_lp;
@@ -105,9 +115,11 @@ int main(int argc, char** argv) {
     CUDA_CHECK(cudaMalloc(&d_id, sizeof(int)));
     CUDA_CHECK(cudaMemcpy(d_id, ids.data(), sizeof(int), cudaMemcpyHostToDevice));
     if (use_graph)  // variant with the ids on the device: it can be captured into a graph
-        rows.push_back({"embedding (1 token, device id)", meas([&] { Tensor o = embedding_dev(table_ref, d_id, 1); }), 1});
+        rows.push_back(
+            {"embedding (1 token, device id)", meas([&] { Tensor o = embedding_dev(table_ref, d_id, 1); }), 1});
     else
-        rows.push_back({"embedding (1 token, incl. sync)", time_us([&] { Tensor o = embedding(table_ref, ids); }, 100), 1});
+        rows.push_back(
+            {"embedding (1 token, incl. sync)", time_us([&] { Tensor o = embedding(table_ref, ids); }, 100), 1});
 
     std::printf("weights: %s | timing: %s | empty kernel launch: %.2f us\n\n", dtype_name(dt),
                 use_graph ? "inside a CUDA graph (GPU time)" : "back-to-back host launches", launch);

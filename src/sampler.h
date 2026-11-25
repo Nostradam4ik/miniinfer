@@ -23,8 +23,7 @@ public:
         if (!(cfg.temperature >= 0.f) || !std::isfinite(cfg.temperature))
             throw std::invalid_argument("Sampler: temperature must be finite and >= 0");
         if (cfg.top_k < 0) throw std::invalid_argument("Sampler: top_k must be >= 0");
-        if (!(cfg.top_p > 0.f && cfg.top_p <= 1.f))
-            throw std::invalid_argument("Sampler: top_p must be in (0, 1]");
+        if (!(cfg.top_p > 0.f && cfg.top_p <= 1.f)) throw std::invalid_argument("Sampler: top_p must be in (0, 1]");
     }
 
     int sample(const std::vector<float>& logits) {

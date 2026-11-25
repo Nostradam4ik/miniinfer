@@ -8,12 +8,20 @@ namespace {
 template <typename H>
 __device__ __forceinline__ H float_to(float v);
 template <>
-__device__ __forceinline__ __half float_to<__half>(float v) { return __float2half_rn(v); }
+__device__ __forceinline__ __half float_to<__half>(float v) {
+    return __float2half_rn(v);
+}
 template <>
-__device__ __forceinline__ __nv_bfloat16 float_to<__nv_bfloat16>(float v) { return __float2bfloat16_rn(v); }
+__device__ __forceinline__ __nv_bfloat16 float_to<__nv_bfloat16>(float v) {
+    return __float2bfloat16_rn(v);
+}
 
-__device__ __forceinline__ float to_float(__half v) { return __half2float(v); }
-__device__ __forceinline__ float to_float(__nv_bfloat16 v) { return __bfloat162float(v); }
+__device__ __forceinline__ float to_float(__half v) {
+    return __half2float(v);
+}
+__device__ __forceinline__ float to_float(__nv_bfloat16 v) {
+    return __bfloat162float(v);
+}
 
 struct DevStats {
     unsigned long long overflow;
@@ -101,9 +109,11 @@ Tensor from_lowp(const LowpMatrix& m) {
     const int block = 256;
     const unsigned grid = static_cast<unsigned>((n + block - 1) / block);
     if (m.dtype() == DType::F16)
-        from_lowp_kernel<__half><<<grid, block, 0, exec_stream()>>>(static_cast<const __half*>(m.data()), out.data(), n);
+        from_lowp_kernel<__half>
+            <<<grid, block, 0, exec_stream()>>>(static_cast<const __half*>(m.data()), out.data(), n);
     else
-        from_lowp_kernel<__nv_bfloat16><<<grid, block, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(m.data()), out.data(), n);
+        from_lowp_kernel<__nv_bfloat16>
+            <<<grid, block, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(m.data()), out.data(), n);
     CUDA_CHECK(cudaGetLastError());
     return out;
 }

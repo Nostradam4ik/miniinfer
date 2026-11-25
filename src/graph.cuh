@@ -130,8 +130,8 @@ private:
     const Model& model_;
     KVCache& cache_;
     int vocab_;
-    GpuArena arena_;      // declared BEFORE logits_: destroyed after it
-    Tensor logits_;       // [1 x vocab] in the arena: the graph writes here
+    GpuArena arena_;  // declared BEFORE logits_: destroyed after it
+    Tensor logits_;   // [1 x vocab] in the arena: the graph writes here
     cudaStream_t stream_ = nullptr;
     cudaGraph_t graph_ = nullptr;
     cudaGraphExec_t exec_ = nullptr;

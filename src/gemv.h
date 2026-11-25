@@ -6,12 +6,12 @@
 // A, R, C are fp32. Accumulation is always in fp32.
 #include "tensor.cuh"
 
-void gemv_launch(const float* A, const float* norm_w, float eps, const void* B, DType dt, const float* R,
-                 float* C, int M, int N, int K);
+void gemv_launch(const float* A, const float* norm_w, float eps, const void* B, DType dt, const float* R, float* C,
+                 int M, int N, int K);
 
 // out = silu(P(A) * Wg) * (P(A) * Wu), P = RMSNorm. Both matrices use the same format dt.
-void gemv_gate_up_launch(const float* A, const float* norm_w, float eps, const void* Wg, const void* Wu,
-                         DType dt, float* C, int M, int N, int K);
+void gemv_gate_up_launch(const float* A, const float* norm_w, float eps, const void* Wg, const void* Wu, DType dt,
+                         float* C, int M, int N, int K);
 
 // How many columns one thread handles: 1, 2 or 4 (vectorized loads). N must be divisible by it.
 // The automatic choice depends on N and the format; override_vec != 0 forces a value

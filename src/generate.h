@@ -18,14 +18,13 @@ struct GenerateOptions {
 struct GenerateResult {
     std::vector<int> tokens;  // new tokens only, without the prompt and the stop token
     bool hit_stop = false;
-    double prefill_ms = 0;    // prompt processing
-    double decode_ms = 0;     // all single-token steps
+    double prefill_ms = 0;        // prompt processing
+    double decode_ms = 0;         // all single-token steps
     double graph_capture_ms = 0;  // graph capture (once per generate() call; not part of decode_ms)
 };
 
 // on_token is called right after each new token (for streaming).
-inline GenerateResult generate(const Model& model, const std::vector<int>& prompt,
-                               const GenerateOptions& opt,
+inline GenerateResult generate(const Model& model, const std::vector<int>& prompt, const GenerateOptions& opt,
                                const std::function<void(int)>& on_token = nullptr) {
     if (prompt.empty()) throw std::invalid_argument("generate: empty prompt");
     if (opt.max_new_tokens < 0) throw std::invalid_argument("generate: negative max_new_tokens");
@@ -44,9 +43,7 @@ inline GenerateResult generate(const Model& model, const std::vector<int>& promp
 
     Sampler sampler(opt.sampler);
     KVCache cache(model.cfg, static_cast<int>(need));
-    auto is_stop = [&](int t) {
-        return std::find(opt.stop_ids.begin(), opt.stop_ids.end(), t) != opt.stop_ids.end();
-    };
+    auto is_stop = [&](int t) { return std::find(opt.stop_ids.begin(), opt.stop_ids.end(), t) != opt.stop_ids.end(); };
 
     auto t0 = clock::now();
     std::vector<float> logits = model.forward_cached(prompt, cache, true).to_host();  // to_host synchronizes

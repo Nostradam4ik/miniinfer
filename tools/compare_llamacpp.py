@@ -9,6 +9,7 @@ warm-up and clock changes of a laptop GPU affect all of them equally. For both e
 per token is used (llama-bench reports the mean); the summary is the median over the rounds.
 If llama.cpp cannot find the CUDA DLLs, add CUDA\\bin to PATH.
 """
+
 import argparse
 import json
 import os

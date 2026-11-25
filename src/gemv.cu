@@ -19,7 +19,8 @@ std::atomic<int> g_vec_override{0};
 }
 
 void gemv_set_vec_override(int vec) {
-    if (vec != 0 && vec != 1 && vec != 2 && vec != 4) throw std::invalid_argument("gemv_set_vec_override: 0, 1, 2 or 4");
+    if (vec != 0 && vec != 1 && vec != 2 && vec != 4)
+        throw std::invalid_argument("gemv_set_vec_override: 0, 1, 2 or 4");
     g_vec_override = vec;
 }
 
@@ -49,8 +50,8 @@ __device__ __forceinline__ float block_rstd(const float* a, int K, float eps, fl
 }
 
 template <typename WT, int VEC, bool NORM, bool RESID>
-__global__ void gemv_kernel(const float* A, const float* norm_w, float eps, const WT* B, const float* R,
-                            float* C, int M, int N, int K) {
+__global__ void gemv_kernel(const float* A, const float* norm_w, float eps, const WT* B, const float* R, float* C,
+                            int M, int N, int K) {
     constexpr int BLOCK_COLS = GEMV_COLS * VEC;
     __shared__ float part[GEMV_KSPLIT][BLOCK_COLS];
     __shared__ float wsum[GEMV_KSPLIT];  // 512 threads = 16 warps
@@ -146,36 +147,57 @@ __global__ void gemv_gate_up_kernel(const float* A, const float* norm_w, float e
 namespace {
 
 template <typename WT, int VEC>
-void launch_vec(const float* A, const float* nw, float eps, const void* Bv, const float* R, float* C, int M, int N, int K) {
+void launch_vec(const float* A, const float* nw, float eps, const void* Bv, const float* R, float* C, int M, int N,
+                int K) {
     const WT* B = static_cast<const WT*>(Bv);
     const dim3 grid((N + GEMV_COLS * VEC - 1) / (GEMV_COLS * VEC), M), block(GEMV_COLS, GEMV_KSPLIT);
-    if (nw && R) gemv_kernel<WT, VEC, true, true><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
-    else if (nw) gemv_kernel<WT, VEC, true, false><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
-    else if (R) gemv_kernel<WT, VEC, false, true><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
-    else gemv_kernel<WT, VEC, false, false><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
+    if (nw && R)
+        gemv_kernel<WT, VEC, true, true><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
+    else if (nw)
+        gemv_kernel<WT, VEC, true, false><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
+    else if (R)
+        gemv_kernel<WT, VEC, false, true><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
+    else
+        gemv_kernel<WT, VEC, false, false><<<grid, block, 0, exec_stream()>>>(A, nw, eps, B, R, C, M, N, K);
 }
 
 template <typename WT>
-void launch_wt(const float* A, const float* nw, float eps, const void* B, const float* R, float* C, int M, int N, int K) {
+void launch_wt(const float* A, const float* nw, float eps, const void* B, const float* R, float* C, int M, int N,
+               int K) {
     switch (gemv_choose_vec(N, std::is_same<WT, float>::value ? DType::F32 : DType::F16)) {
-        case 4: launch_vec<WT, 4>(A, nw, eps, B, R, C, M, N, K); break;
-        case 2: launch_vec<WT, 2>(A, nw, eps, B, R, C, M, N, K); break;
-        default: launch_vec<WT, 1>(A, nw, eps, B, R, C, M, N, K); break;
+        case 4:
+            launch_vec<WT, 4>(A, nw, eps, B, R, C, M, N, K);
+            break;
+        case 2:
+            launch_vec<WT, 2>(A, nw, eps, B, R, C, M, N, K);
+            break;
+        default:
+            launch_vec<WT, 1>(A, nw, eps, B, R, C, M, N, K);
+            break;
     }
 }
 
 template <typename WT, int VEC>
-void launch_gu_vec(const float* A, const float* nw, float eps, const void* Wg, const void* Wu, float* C, int M, int N, int K) {
+void launch_gu_vec(const float* A, const float* nw, float eps, const void* Wg, const void* Wu, float* C, int M, int N,
+                   int K) {
     const dim3 grid((N + GEMV_COLS * VEC - 1) / (GEMV_COLS * VEC), M), block(GEMV_COLS, GEMV_KSPLIT);
-    gemv_gate_up_kernel<WT, VEC><<<grid, block, 0, exec_stream()>>>(A, nw, eps, static_cast<const WT*>(Wg), static_cast<const WT*>(Wu), C, M, N, K);
+    gemv_gate_up_kernel<WT, VEC><<<grid, block, 0, exec_stream()>>>(A, nw, eps, static_cast<const WT*>(Wg),
+                                                                    static_cast<const WT*>(Wu), C, M, N, K);
 }
 
 template <typename WT>
-void launch_gu_wt(const float* A, const float* nw, float eps, const void* Wg, const void* Wu, float* C, int M, int N, int K) {
+void launch_gu_wt(const float* A, const float* nw, float eps, const void* Wg, const void* Wu, float* C, int M, int N,
+                  int K) {
     switch (gemv_choose_vec(N, std::is_same<WT, float>::value ? DType::F32 : DType::F16)) {
-        case 4: launch_gu_vec<WT, 4>(A, nw, eps, Wg, Wu, C, M, N, K); break;
-        case 2: launch_gu_vec<WT, 2>(A, nw, eps, Wg, Wu, C, M, N, K); break;
-        default: launch_gu_vec<WT, 1>(A, nw, eps, Wg, Wu, C, M, N, K); break;
+        case 4:
+            launch_gu_vec<WT, 4>(A, nw, eps, Wg, Wu, C, M, N, K);
+            break;
+        case 2:
+            launch_gu_vec<WT, 2>(A, nw, eps, Wg, Wu, C, M, N, K);
+            break;
+        default:
+            launch_gu_vec<WT, 1>(A, nw, eps, Wg, Wu, C, M, N, K);
+            break;
     }
 }
 
@@ -186,24 +208,36 @@ void check_launch_dims(int M, int N, int K) {
 
 }  // namespace
 
-void gemv_launch(const float* A, const float* norm_w, float eps, const void* B, DType dt, const float* R,
-                 float* C, int M, int N, int K) {
+void gemv_launch(const float* A, const float* norm_w, float eps, const void* B, DType dt, const float* R, float* C,
+                 int M, int N, int K) {
     check_launch_dims(M, N, K);
     switch (dt) {
-        case DType::F32: launch_wt<float>(A, norm_w, eps, B, R, C, M, N, K); break;
-        case DType::F16: launch_wt<__half>(A, norm_w, eps, B, R, C, M, N, K); break;
-        case DType::BF16: launch_wt<__nv_bfloat16>(A, norm_w, eps, B, R, C, M, N, K); break;
+        case DType::F32:
+            launch_wt<float>(A, norm_w, eps, B, R, C, M, N, K);
+            break;
+        case DType::F16:
+            launch_wt<__half>(A, norm_w, eps, B, R, C, M, N, K);
+            break;
+        case DType::BF16:
+            launch_wt<__nv_bfloat16>(A, norm_w, eps, B, R, C, M, N, K);
+            break;
     }
     CUDA_CHECK(cudaGetLastError());
 }
 
-void gemv_gate_up_launch(const float* A, const float* norm_w, float eps, const void* Wg, const void* Wu,
-                         DType dt, float* C, int M, int N, int K) {
+void gemv_gate_up_launch(const float* A, const float* norm_w, float eps, const void* Wg, const void* Wu, DType dt,
+                         float* C, int M, int N, int K) {
     check_launch_dims(M, N, K);
     switch (dt) {
-        case DType::F32: launch_gu_wt<float>(A, norm_w, eps, Wg, Wu, C, M, N, K); break;
-        case DType::F16: launch_gu_wt<__half>(A, norm_w, eps, Wg, Wu, C, M, N, K); break;
-        case DType::BF16: launch_gu_wt<__nv_bfloat16>(A, norm_w, eps, Wg, Wu, C, M, N, K); break;
+        case DType::F32:
+            launch_gu_wt<float>(A, norm_w, eps, Wg, Wu, C, M, N, K);
+            break;
+        case DType::F16:
+            launch_gu_wt<__half>(A, norm_w, eps, Wg, Wu, C, M, N, K);
+            break;
+        case DType::BF16:
+            launch_gu_wt<__nv_bfloat16>(A, norm_w, eps, Wg, Wu, C, M, N, K);
+            break;
     }
     CUDA_CHECK(cudaGetLastError());
 }

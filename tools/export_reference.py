@@ -7,6 +7,7 @@ Creates the model/ directory (fp32 weights + manifest.txt + config.json) and ref
 Manifest format (one line per tensor):  name dtype ndim d0 d1 ... byte_offset
 All tensors are raw little-endian float32 (int32 for tokens).
 """
+
 import json
 import os
 import sys
@@ -70,8 +71,7 @@ def main():
         "num_kv_heads": cfg.num_key_value_heads,
         "head_dim": cfg.hidden_size // cfg.num_attention_heads,
         "rms_norm_eps": cfg.rms_norm_eps,
-        "rope_theta": getattr(cfg, "rope_theta", None)
-        or cfg.rope_parameters["rope_theta"],
+        "rope_theta": getattr(cfg, "rope_theta", None) or cfg.rope_parameters["rope_theta"],
         "tie_word_embeddings": bool(cfg.tie_word_embeddings),
     }
     with open(os.path.join(MODEL_DIR, "config.json"), "w") as f:
@@ -99,6 +99,7 @@ def main():
         def fn(_mod, _inp, out):
             t = out[0] if isinstance(out, tuple) else out
             captured[name] = t.detach().cpu().numpy()[0]  # drop the batch dimension
+
         return fn
 
     layer0 = model.model.layers[0]
@@ -118,6 +119,7 @@ def main():
     def pre_hook(name):
         def fn(_mod, args):
             captured[name] = args[0].detach().cpu().numpy()[0]
+
         return fn
 
     layer0.self_attn.o_proj.register_forward_pre_hook(pre_hook("l0.attn_ctx"))
@@ -157,10 +159,8 @@ def main():
     for key, text in gen_prompts.items():
         pids = tok(text, return_tensors="pt").input_ids
         with torch.no_grad():
-            full = model.generate(
-                pids, max_new_tokens=20, do_sample=False, pad_token_id=tok.eos_token_id
-            )
-        new = full[0, pids.shape[1]:]
+            full = model.generate(pids, max_new_tokens=20, do_sample=False, pad_token_id=tok.eos_token_id)
+        new = full[0, pids.shape[1] :]
         g.add(f"{key}.prompt", pids[0].numpy().astype(np.int32))
         g.add(f"{key}.new", new.numpy().astype(np.int32))
         print(key, repr(text), "->", repr(tok.decode(new)))

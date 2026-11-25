@@ -10,8 +10,7 @@ constexpr int kGemvMaxRows = 4;
 
 // Low-level launches on raw pointers (for benchmarks).
 // C[M x N] = A[M x K] * B[K x N]
-void launch_matmul(MatmulKind kind, const float* A, const float* B, float* C, int M,
-                   int N, int K);
+void launch_matmul(MatmulKind kind, const float* A, const float* B, float* C, int M, int N, int K);
 
 // High-level interface. Throws std::invalid_argument if the shapes do not match.
 // B is a weight matrix in fp32 (Tensor), fp16 or bf16 (LowpMatrix); conversion to WeightRef is implicit.
@@ -38,8 +37,8 @@ constexpr int kMaxAttentionKeys = 12288;
 // d_pos != nullptr: the position of the first query is read from device memory (one int) and pos_offset
 // is ignored. Needed for the CUDA graph. The host then cannot validate the position; the kernel fills
 // the output with NaN if the position falls outside the k, v cache.
-Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads,
-                 int num_kv_heads, int head_dim, int pos_offset = 0, const int* d_pos = nullptr);
+Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads, int num_kv_heads, int head_dim,
+                 int pos_offset = 0, const int* d_pos = nullptr);
 
 // ---- Fused operations (fewer kernel launches per token) --------------------------------------
 // For small M (<= kGemvMaxRows, i.e. decoding) each one is a single launch.
@@ -59,8 +58,8 @@ Tensor rmsnorm_gate_up(const Tensor& x, const Tensor& norm_w, float eps, WeightR
 // cache (cache_k, cache_v: [max_seq x KV*hd]) at rows pos_offset .. pos_offset + T - 1.
 // d_pos != nullptr: the position (pos_offset) is read from device memory, see attention(). Cache rows out
 // of range are then not written (the kernel skips them), and attention returns NaN.
-Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int head_dim, float theta,
-                         int pos_offset, Tensor& cache_k, Tensor& cache_v, const int* d_pos = nullptr);
+Tensor rope_qkv_to_cache(const Tensor& qkv, int num_heads, int num_kv_heads, int head_dim, float theta, int pos_offset,
+                         Tensor& cache_k, Tensor& cache_v, const int* d_pos = nullptr);
 
 // Raw launch of the RoPE + cache write kernel on ready buffers (for bounds tests and benchmarks). No
 // argument checks: qkv [T x (H+2*KV)*hd], q_out [T x H*hd], cache_k/cache_v [cache_rows x KV*hd].

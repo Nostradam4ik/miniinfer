@@ -43,7 +43,9 @@ TEST(sampler_nan_logits_throw) {
     CHECK_THROWS(t.sample({1.f, std::nanf(""), 2.f}));
 }
 
-TEST(sampler_empty_logits_throw) { CHECK_THROWS(Sampler(cfg(1.f)).sample({})); }
+TEST(sampler_empty_logits_throw) {
+    CHECK_THROWS(Sampler(cfg(1.f)).sample({}));
+}
 
 TEST(sampler_invalid_config_throws) {
     CHECK_THROWS(Sampler(cfg(-1.f)));
@@ -82,7 +84,7 @@ TEST(sampler_temperature_sharpens_and_flattens) {
     Sampler cold(cfg(0.1f)), hot(cfg(10.f));
     double p_cold = static_cast<double>(histogram(cold, logits, N)[2]) / N;
     double p_hot = static_cast<double>(histogram(hot, logits, N)[2]) / N;
-    CHECK(p_cold > 0.99);              // almost always the best one
+    CHECK(p_cold > 0.99);                // almost always the best one
     CHECK(p_hot > 0.3 && p_hot < 0.45);  // almost uniform (1/3 + a slight skew)
 }
 
@@ -117,7 +119,11 @@ TEST(sampler_is_deterministic_for_same_seed) {
     for (int i = 0; i < 50; ++i) logits[i] = std::sin(i * 0.7f);
     Sampler a(cfg(1.f, 0, 1.f, 42)), b(cfg(1.f, 0, 1.f, 42)), c(cfg(1.f, 0, 1.f, 43));
     std::vector<int> sa, sb, sc;
-    for (int i = 0; i < 100; ++i) { sa.push_back(a.sample(logits)); sb.push_back(b.sample(logits)); sc.push_back(c.sample(logits)); }
+    for (int i = 0; i < 100; ++i) {
+        sa.push_back(a.sample(logits));
+        sb.push_back(b.sample(logits));
+        sc.push_back(c.sample(logits));
+    }
     CHECK(sa == sb);
     CHECK(sa != sc);
 }

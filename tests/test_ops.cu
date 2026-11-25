@@ -52,10 +52,10 @@ TEST(write_rows_copies_into_offset_and_leaves_rest) {
 
 TEST(write_rows_rejects_overflow_and_bad_shapes) {
     Tensor dst({4, 3}), src({2, 3});
-    CHECK_THROWS(write_rows(dst, src, 3));   // 3 + 2 > 4
+    CHECK_THROWS(write_rows(dst, src, 3));  // 3 + 2 > 4
     CHECK_THROWS(write_rows(dst, src, -1));
     CHECK_THROWS(write_rows(dst, Tensor({2, 4}), 0));  // different number of columns
-    write_rows(dst, src, 2);                 // exactly up to the edge: allowed
+    write_rows(dst, src, 2);                           // exactly up to the edge: allowed
 }
 
 TEST(slice_rows_extracts_range) {
@@ -81,7 +81,9 @@ TEST(transpose_known_values) {
 
 // Shapes around the tile size 32 and non-multiples of it: bounds bugs hide here.
 TEST(transpose_matches_cpu_and_roundtrips) {
-    struct S { int R, C; };
+    struct S {
+        int R, C;
+    };
     const S shapes[] = {{1, 1}, {1, 40}, {40, 1}, {31, 33}, {32, 32}, {33, 31}, {64, 65}, {100, 7}, {576, 1536}};
     for (const S& s : shapes) {
         std::vector<float> x = rnd(static_cast<size_t>(s.R) * s.C, 100 + s.R);
@@ -99,7 +101,9 @@ TEST(transpose_matches_cpu_and_roundtrips) {
     }
 }
 
-TEST(transpose_rejects_non_2d) { CHECK_THROWS(transpose(Tensor({2, 3, 4}))); }
+TEST(transpose_rejects_non_2d) {
+    CHECK_THROWS(transpose(Tensor({2, 3, 4})));
+}
 
 TEST(add_sums_elementwise) {
     std::vector<float> a = rnd(1000, 1), b = rnd(1000, 2);
@@ -107,15 +111,17 @@ TEST(add_sums_elementwise) {
     for (size_t i = 0; i < a.size(); ++i) CHECK(c[i] == a[i] + b[i]);
 }
 
-TEST(add_shape_mismatch_throws) { CHECK_THROWS(add(Tensor({2, 3}), Tensor({3, 2}))); }
+TEST(add_shape_mismatch_throws) {
+    CHECK_THROWS(add(Tensor({2, 3}), Tensor({3, 2})));
+}
 
 TEST(silu_mul_known_values) {
     Tensor g = Tensor::from_host({0.f, 1.f, -1.f, 2.f}, {4});
     Tensor u = Tensor::from_host({5.f, 1.f, 1.f, 0.5f}, {4});
     std::vector<float> o = silu_mul(g, u).to_host();
-    CHECK_NEAR(o[0], 0.0, 1e-7);                             // silu(0) = 0
-    CHECK_NEAR(o[1], 1.0 / (1.0 + std::exp(-1.0)), 1e-6);    // 0.7310586
-    CHECK_NEAR(o[2], -1.0 / (1.0 + std::exp(1.0)), 1e-6);    // -0.2689414
+    CHECK_NEAR(o[0], 0.0, 1e-7);                           // silu(0) = 0
+    CHECK_NEAR(o[1], 1.0 / (1.0 + std::exp(-1.0)), 1e-6);  // 0.7310586
+    CHECK_NEAR(o[2], -1.0 / (1.0 + std::exp(1.0)), 1e-6);  // -0.2689414
     CHECK_NEAR(o[3], 2.0 / (1.0 + std::exp(-2.0)) * 0.5, 1e-6);
 }
 
@@ -130,29 +136,34 @@ TEST(silu_mul_is_stable_for_extreme_inputs) {
     CHECK_NEAR(o[3], 1000.0, 1e-3);
 }
 
-TEST(silu_mul_shape_mismatch_throws) { CHECK_THROWS(silu_mul(Tensor({4}), Tensor({5}))); }
+TEST(silu_mul_shape_mismatch_throws) {
+    CHECK_THROWS(silu_mul(Tensor({4}), Tensor({5})));
+}
 
 // ---- rope ------------------------------------------------------------------
 
 TEST(rope_position_zero_is_identity) {
     const int T = 1, H = 3, hd = 8;
     std::vector<float> x = rnd(T * H * hd, 1);
-    CHECK_NEAR(max_abs_diff(rope(Tensor::from_host(x, {T, H * hd}), H, hd, 10000.f).to_host(), x),
-               0.0, 1e-7);
+    CHECK_NEAR(max_abs_diff(rope(Tensor::from_host(x, {T, H * hd}), H, hd, 10000.f).to_host(), x), 0.0, 1e-7);
 }
 
 // hd = 2, any theta: angle = pos * theta^0 = pos, (1,0) -> (cos pos, sin pos).
 TEST(rope_known_rotation) {
     Tensor x = Tensor::from_host({1.f, 0.f, 1.f, 0.f}, {2, 2});  // two tokens, one head
     std::vector<float> y = rope(x, 1, 2, 10000.f).to_host();
-    CHECK_NEAR(y[0], 1.0, 1e-6);          // position 0
+    CHECK_NEAR(y[0], 1.0, 1e-6);  // position 0
     CHECK_NEAR(y[1], 0.0, 1e-6);
     CHECK_NEAR(y[2], std::cos(1.0), 1e-6);  // position 1
     CHECK_NEAR(y[3], std::sin(1.0), 1e-6);
 }
 
 TEST(rope_matches_cpu_for_many_shapes) {
-    struct S { int T, H, hd; float theta; int off; };
+    struct S {
+        int T, H, hd;
+        float theta;
+        int off;
+    };
     const S shapes[] = {{1, 1, 2, 10000.f, 0},  {5, 9, 64, 100000.f, 0}, {7, 3, 64, 100000.f, 11},
                         {16, 2, 8, 10000.f, 3}, {33, 4, 16, 500.f, 100}, {3, 1, 128, 1e6f, 1000}};
     for (const S& s : shapes) {
@@ -187,16 +198,15 @@ TEST(rope_offset_equals_slice_of_full) {
     std::vector<float> x = rnd(T * H * hd, 4);
     std::vector<float> full = rope(Tensor::from_host(x, {T, H * hd}), H, hd, 10000.f).to_host();
     std::vector<float> tail_in(x.begin() + off * H * hd, x.end());
-    std::vector<float> tail =
-        rope(Tensor::from_host(tail_in, {T - off, H * hd}), H, hd, 10000.f, off).to_host();
+    std::vector<float> tail = rope(Tensor::from_host(tail_in, {T - off, H * hd}), H, hd, 10000.f, off).to_host();
     std::vector<float> want(full.begin() + off * H * hd, full.end());
     CHECK_NEAR(max_abs_diff(tail, want), 0.0, 1e-6);
 }
 
 TEST(rope_invalid_args_throw) {
     Tensor x({2, 12});
-    CHECK_THROWS(rope(x, 3, 3, 10000.f));   // odd head_dim
-    CHECK_THROWS(rope(x, 2, 4, 10000.f));   // 2*4 != 12
+    CHECK_THROWS(rope(x, 3, 3, 10000.f));  // odd head_dim
+    CHECK_THROWS(rope(x, 2, 4, 10000.f));  // 2*4 != 12
     CHECK_THROWS(rope(x, 3, 4, 10000.f, -1));
 }
 
@@ -228,23 +238,23 @@ TEST(attention_uniform_scores_average_values) {
 }
 
 TEST(attention_matches_cpu_for_many_shapes) {
-    struct S { int T, S, H, KV, hd, off; };
-    const S shapes[] = {{1, 1, 1, 1, 4, 0},     {5, 5, 9, 3, 64, 0},   {7, 7, 4, 2, 8, 0},
-                        {1, 20, 9, 3, 64, 19},  {3, 40, 6, 2, 16, 37}, {33, 33, 2, 1, 32, 0},
-                        {70, 70, 4, 4, 16, 0},  {2, 300, 3, 1, 8, 298}};
+    struct S {
+        int T, S, H, KV, hd, off;
+    };
+    const S shapes[] = {{1, 1, 1, 1, 4, 0},    {5, 5, 9, 3, 64, 0},   {7, 7, 4, 2, 8, 0},    {1, 20, 9, 3, 64, 19},
+                        {3, 40, 6, 2, 16, 37}, {33, 33, 2, 1, 32, 0}, {70, 70, 4, 4, 16, 0}, {2, 300, 3, 1, 8, 298}};
     for (const S& s : shapes) {
         std::vector<float> q = rnd(static_cast<size_t>(s.T) * s.H * s.hd, 70 + s.T, 2.f);
         std::vector<float> k = rnd(static_cast<size_t>(s.S) * s.KV * s.hd, 80 + s.S, 2.f);
         std::vector<float> v = rnd(static_cast<size_t>(s.S) * s.KV * s.hd, 90 + s.S);
         std::vector<float> ref = cpu_attention(q, k, v, s.T, s.S, s.H, s.KV, s.hd, s.off);
-        Tensor out = attention(Tensor::from_host(q, {s.T, s.H * s.hd}),
-                               Tensor::from_host(k, {s.S, s.KV * s.hd}),
+        Tensor out = attention(Tensor::from_host(q, {s.T, s.H * s.hd}), Tensor::from_host(k, {s.S, s.KV * s.hd}),
                                Tensor::from_host(v, {s.S, s.KV * s.hd}), s.H, s.KV, s.hd, s.off);
         double d = max_abs_diff(out.to_host(), ref);
         if (d > 1e-5) {
             std::ostringstream os;
-            os << "T=" << s.T << " S=" << s.S << " H=" << s.H << " KV=" << s.KV << " hd=" << s.hd
-               << " off=" << s.off << " diff=" << d;
+            os << "T=" << s.T << " S=" << s.S << " H=" << s.H << " KV=" << s.KV << " hd=" << s.hd << " off=" << s.off
+               << " diff=" << d;
             throw TestFailure(os.str());
         }
     }
@@ -255,12 +265,15 @@ TEST(attention_is_causal) {
     const int T = 8, H = 2, KV = 1, hd = 8, cut = 4;
     std::vector<float> q = rnd(T * H * hd, 1), k = rnd(T * KV * hd, 2), v = rnd(T * KV * hd, 3);
     Tensor Q = Tensor::from_host(q, {T, H * hd});
-    std::vector<float> a = attention(Q, Tensor::from_host(k, {T, KV * hd}),
-                                     Tensor::from_host(v, {T, KV * hd}), H, KV, hd).to_host();
+    std::vector<float> a =
+        attention(Q, Tensor::from_host(k, {T, KV * hd}), Tensor::from_host(v, {T, KV * hd}), H, KV, hd).to_host();
     for (int j = cut; j < T; ++j)
-        for (int d = 0; d < KV * hd; ++d) { k[j * KV * hd + d] += 100.f; v[j * KV * hd + d] -= 50.f; }
-    std::vector<float> b = attention(Q, Tensor::from_host(k, {T, KV * hd}),
-                                     Tensor::from_host(v, {T, KV * hd}), H, KV, hd).to_host();
+        for (int d = 0; d < KV * hd; ++d) {
+            k[j * KV * hd + d] += 100.f;
+            v[j * KV * hd + d] -= 50.f;
+        }
+    std::vector<float> b =
+        attention(Q, Tensor::from_host(k, {T, KV * hd}), Tensor::from_host(v, {T, KV * hd}), H, KV, hd).to_host();
     for (int t = 0; t < cut; ++t)
         for (int d = 0; d < H * hd; ++d) CHECK(a[t * H * hd + d] == b[t * H * hd + d]);
 }
@@ -273,10 +286,10 @@ TEST(attention_gqa_heads_share_kv_groups) {
     for (int t = 0; t < T; ++t)
         for (int h = 0; h < H; ++h)
             for (int d = 0; d < hd; ++d) q[(t * H + h) * hd + d] = head[t * hd + d];  // same Q
-    std::vector<float> out = attention(Tensor::from_host(q, {T, H * hd}),
-                                       Tensor::from_host(rnd(T * KV * hd, 1), {T, KV * hd}),
-                                       Tensor::from_host(rnd(T * KV * hd, 2), {T, KV * hd}), H, KV, hd)
-                                 .to_host();
+    std::vector<float> out =
+        attention(Tensor::from_host(q, {T, H * hd}), Tensor::from_host(rnd(T * KV * hd, 1), {T, KV * hd}),
+                  Tensor::from_host(rnd(T * KV * hd, 2), {T, KV * hd}), H, KV, hd)
+            .to_host();
     const int t = T - 1;
     for (int d = 0; d < hd; ++d) {
         CHECK(out[(t * H + 0) * hd + d] == out[(t * H + 1) * hd + d]);  // group 0
@@ -293,8 +306,7 @@ TEST(attention_offset_equals_slice_of_full) {
     Tensor K = Tensor::from_host(k, {T, KV * hd}), V = Tensor::from_host(v, {T, KV * hd});
     std::vector<float> full = attention(Tensor::from_host(q, {T, H * hd}), K, V, H, KV, hd).to_host();
     std::vector<float> q_tail(q.begin() + off * H * hd, q.end());
-    std::vector<float> tail =
-        attention(Tensor::from_host(q_tail, {T - off, H * hd}), K, V, H, KV, hd, off).to_host();
+    std::vector<float> tail = attention(Tensor::from_host(q_tail, {T - off, H * hd}), K, V, H, KV, hd, off).to_host();
     CHECK_NEAR(max_abs_diff(tail, std::vector<float>(full.begin() + off * H * hd, full.end())), 0.0, 1e-6);
 }
 
@@ -309,9 +321,9 @@ TEST(attention_is_numerically_stable_for_large_scores) {
 
 TEST(attention_invalid_args_throw) {
     Tensor q({2, 8}), k({2, 4}), v({2, 4});
-    CHECK_THROWS(attention(q, k, v, 3, 2, 4));             // 3 is not a multiple of 2
-    CHECK_THROWS(attention(q, k, v, 2, 1, 5));             // shapes do not match
-    CHECK_THROWS(attention(q, k, v, 2, 1, 4, 1));          // S < pos_offset + T
+    CHECK_THROWS(attention(q, k, v, 3, 2, 4));     // 3 is not a multiple of 2
+    CHECK_THROWS(attention(q, k, v, 2, 1, 5));     // shapes do not match
+    CHECK_THROWS(attention(q, k, v, 2, 1, 4, 1));  // S < pos_offset + T
     Tensor big_k({kMaxAttentionKeys + 1, 4}), big_q({1, 8});
     CHECK_THROWS(attention(big_q, big_k, big_k, 2, 1, 4, kMaxAttentionKeys));  // too many keys
 }
@@ -330,7 +342,9 @@ TEST(rmsnorm_known_value) {
 
 // Various D: below the block size (256), not a multiple of the warp (32), above a block, the real 576.
 TEST(rmsnorm_matches_cpu_for_many_shapes) {
-    struct S { int T, D; };
+    struct S {
+        int T, D;
+    };
     const S shapes[] = {{1, 1}, {1, 7}, {3, 31}, {2, 33}, {4, 256}, {5, 257}, {5, 576}, {2, 1000}};
     for (const S& s : shapes) {
         std::vector<float> x = rnd(static_cast<size_t>(s.T) * s.D, 40 + s.D, 3.f);

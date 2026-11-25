@@ -11,8 +11,7 @@
 // ---------------------------------------------------------------------------
 
 // Naive version: one thread = one element of C.
-__global__ void matmul_naive_kernel(const float* A, const float* B, float* C, int M,
-                                    int N, int K) {
+__global__ void matmul_naive_kernel(const float* A, const float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N) {
@@ -24,8 +23,7 @@ __global__ void matmul_naive_kernel(const float* A, const float* B, float* C, in
 
 // Tiled: 16x16 tiles in shared memory.
 #define TILE 16
-__global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, int M,
-                                    int N, int K) {
+__global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, int M, int N, int K) {
     __shared__ float As[TILE][TILE];
     __shared__ float Bs[TILE][TILE];
 
@@ -54,8 +52,7 @@ __global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, in
 // B may be fp32, fp16 or bf16: each element is converted to float while the tile is loaded
 // into shared memory, and the computation is in fp32. This gives prefill with 16-bit weights without an fp32 copy.
 template <typename WT>
-__global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M,
-                                  int N, int K) {
+__global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M, int N, int K) {
     __shared__ float As[BM][BK];
     __shared__ float Bs[BK][BM];
 
@@ -100,8 +97,7 @@ __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M,
 
 // B may be in any of the weight formats. Naive and Tiled work only with fp32 (teaching versions);
 // Reg and Gemv work with all of them.
-static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DType dt, float* C, int M,
-                              int N, int K) {
+static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DType dt, float* C, int M, int N, int K) {
     if (M <= 0 || N <= 0) return;
     if (K <= 0) {  // empty sum: the result is zeros
         CUDA_CHECK(cudaMemset(C, 0, static_cast<size_t>(M) * N * sizeof(float)));
@@ -129,11 +125,14 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
         case MatmulKind::Reg: {
             dim3 grid((N + BM - 1) / BM, (M + BM - 1) / BM);
             if (dt == DType::F32)
-                matmul_reg_kernel<float><<<grid, block, 0, exec_stream()>>>(A, static_cast<const float*>(B), C, M, N, K);
+                matmul_reg_kernel<float>
+                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const float*>(B), C, M, N, K);
             else if (dt == DType::F16)
-                matmul_reg_kernel<__half><<<grid, block, 0, exec_stream()>>>(A, static_cast<const __half*>(B), C, M, N, K);
+                matmul_reg_kernel<__half>
+                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const __half*>(B), C, M, N, K);
             else
-                matmul_reg_kernel<__nv_bfloat16><<<grid, block, 0, exec_stream()>>>(A, static_cast<const __nv_bfloat16*>(B), C, M, N, K);
+                matmul_reg_kernel<__nv_bfloat16>
+                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const __nv_bfloat16*>(B), C, M, N, K);
             break;
         }
         case MatmulKind::Gemv:
@@ -143,17 +142,14 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
     CUDA_CHECK(cudaGetLastError());
 }
 
-void launch_matmul(MatmulKind kind, const float* A, const float* B, float* C, int M,
-                   int N, int K) {
+void launch_matmul(MatmulKind kind, const float* A, const float* B, float* C, int M, int N, int K) {
     launch_matmul_raw(kind, A, B, DType::F32, C, M, N, K);
 }
 
 Tensor matmul(const Tensor& A, WeightRef B, MatmulKind kind) {
-    if (A.ndim() != 2 || B.ndim != 2)
-        throw std::invalid_argument("matmul: expected 2D tensors");
+    if (A.ndim() != 2 || B.ndim != 2) throw std::invalid_argument("matmul: expected 2D tensors");
     if (A.dim(1) != B.rows)
-        throw std::invalid_argument("matmul: inner dimensions differ (" +
-                                    std::to_string(A.dim(1)) + " vs " +
+        throw std::invalid_argument("matmul: inner dimensions differ (" + std::to_string(A.dim(1)) + " vs " +
                                     std::to_string(B.rows) + ")");
     int M = A.dim(0), K = A.dim(1), N = B.cols;
     Tensor C = Tensor::uninitialized({M, N});  // launch_matmul_raw writes every element (or zeros when K=0)
@@ -176,8 +172,8 @@ Tensor embedding(WeightRef table, const std::vector<int>& ids) {
     const int V = table.rows, D = table.cols, T = static_cast<int>(ids.size());
     for (int id : ids)
         if (id < 0 || id >= V)
-            throw std::invalid_argument("embedding: token id " + std::to_string(id) +
-                                        " out of range [0, " + std::to_string(V) + ")");
+            throw std::invalid_argument("embedding: token id " + std::to_string(id) + " out of range [0, " +
+                                        std::to_string(V) + ")");
     Tensor out = Tensor::uninitialized({T, D});
     if (T == 0 || D == 0) return out;
     GpuAllocator& alloc = GpuAllocator::instance();
@@ -185,11 +181,14 @@ Tensor embedding(WeightRef table, const std::vector<int>& ids) {
     int* d_ids = static_cast<int*>(alloc.allocate(id_bytes));
     CUDA_CHECK(cudaMemcpy(d_ids, ids.data(), id_bytes, cudaMemcpyHostToDevice));
     if (table.dtype == DType::F32)
-        embedding_kernel<float><<<T, 128, 0, exec_stream()>>>(static_cast<const float*>(table.data), d_ids, out.data(), D);
+        embedding_kernel<float>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const float*>(table.data), d_ids, out.data(), D);
     else if (table.dtype == DType::F16)
-        embedding_kernel<__half><<<T, 128, 0, exec_stream()>>>(static_cast<const __half*>(table.data), d_ids, out.data(), D);
+        embedding_kernel<__half>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const __half*>(table.data), d_ids, out.data(), D);
     else
-        embedding_kernel<__nv_bfloat16><<<T, 128, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(table.data), d_ids, out.data(), D);
+        embedding_kernel<__nv_bfloat16>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(table.data), d_ids, out.data(), D);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());  // d_ids may return to the pool only after the kernel has finished
     alloc.release(d_ids, id_bytes);
@@ -218,11 +217,14 @@ Tensor embedding_dev(WeightRef table, const int* d_ids, int T) {
     Tensor out = Tensor::uninitialized({T, D});
     if (T == 0 || D == 0) return out;
     if (table.dtype == DType::F32)
-        embedding_dev_kernel<float><<<T, 128, 0, exec_stream()>>>(static_cast<const float*>(table.data), d_ids, out.data(), V, D);
+        embedding_dev_kernel<float>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const float*>(table.data), d_ids, out.data(), V, D);
     else if (table.dtype == DType::F16)
-        embedding_dev_kernel<__half><<<T, 128, 0, exec_stream()>>>(static_cast<const __half*>(table.data), d_ids, out.data(), V, D);
+        embedding_dev_kernel<__half>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const __half*>(table.data), d_ids, out.data(), V, D);
     else
-        embedding_dev_kernel<__nv_bfloat16><<<T, 128, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(table.data), d_ids, out.data(), V, D);
+        embedding_dev_kernel<__nv_bfloat16>
+            <<<T, 128, 0, exec_stream()>>>(static_cast<const __nv_bfloat16*>(table.data), d_ids, out.data(), V, D);
     CUDA_CHECK(cudaGetLastError());
     return out;
 }
@@ -248,8 +250,8 @@ Tensor slice_rows(const Tensor& x, int start, int count) {
         throw std::invalid_argument("slice_rows: range out of bounds");
     Tensor out = Tensor::uninitialized({count, x.dim(1)});
     if (out.numel() == 0) return out;
-    CUDA_CHECK(cudaMemcpy(out.data(), x.data() + static_cast<size_t>(start) * x.dim(1),
-                          out.numel() * sizeof(float), cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaMemcpy(out.data(), x.data() + static_cast<size_t>(start) * x.dim(1), out.numel() * sizeof(float),
+                          cudaMemcpyDeviceToDevice));
     return out;
 }
 
@@ -276,7 +278,8 @@ Tensor transpose(const Tensor& x) {
     const int R = x.dim(0), C = x.dim(1);
     Tensor out = Tensor::uninitialized({C, R});
     if (R == 0 || C == 0) return out;
-    transpose_kernel<<<dim3((C + TT - 1) / TT, (R + TT - 1) / TT), dim3(TT, 8), 0, exec_stream()>>>(x.data(), out.data(), R, C);
+    transpose_kernel<<<dim3((C + TT - 1) / TT, (R + TT - 1) / TT), dim3(TT, 8), 0, exec_stream()>>>(x.data(),
+                                                                                                    out.data(), R, C);
     CUDA_CHECK(cudaGetLastError());
     return out;
 }
@@ -316,7 +319,8 @@ Tensor silu_mul(const Tensor& gate, const Tensor& up) {
     Tensor out = Tensor::uninitialized(gate.shape());
     const size_t n = gate.numel();
     if (n == 0) return out;
-    silu_mul_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, exec_stream()>>>(gate.data(), up.data(), out.data(), n);
+    silu_mul_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, exec_stream()>>>(gate.data(), up.data(),
+                                                                                       out.data(), n);
     CUDA_CHECK(cudaGetLastError());
     return out;
 }
@@ -325,8 +329,7 @@ Tensor silu_mul(const Tensor& gate, const Tensor& up) {
 // RoPE: one thread = one pair (i, i + hd/2) of one head of one token.
 // sinf/cosf (accurate versions, not __sinf), because the angles are large and the fast intrinsics' error grows.
 // ---------------------------------------------------------------------------
-__global__ void rope_kernel(const float* x, float* y, int total_pairs, int heads, int hd,
-                            float theta, int pos_offset) {
+__global__ void rope_kernel(const float* x, float* y, int total_pairs, int heads, int hd, float theta, int pos_offset) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= total_pairs) return;
     const int half = hd / 2;
@@ -344,8 +347,7 @@ __global__ void rope_kernel(const float* x, float* y, int total_pairs, int heads
 }
 
 Tensor rope(const Tensor& x, int num_heads, int head_dim, float theta, int pos_offset) {
-    if (head_dim <= 0 || head_dim % 2 != 0)
-        throw std::invalid_argument("rope: head_dim must be positive and even");
+    if (head_dim <= 0 || head_dim % 2 != 0) throw std::invalid_argument("rope: head_dim must be positive and even");
     if (x.ndim() != 2 || num_heads <= 0 || x.dim(1) != num_heads * head_dim)
         throw std::invalid_argument("rope: expected x[T x (num_heads*head_dim)]");
     if (pos_offset < 0) throw std::invalid_argument("rope: negative pos_offset");
@@ -399,9 +401,8 @@ __device__ float block_reduce_max(float v, float* sh) {
 // it is pos_offset. The first form is needed for the CUDA graph: one graph works for any position.
 // max_keys is how many keys fit into shared memory (and the cache): if the position from the device is
 // out of range, the output is filled with NaN (the error is visible) instead of overrunning shared memory.
-__global__ void attention_kernel(const float* q, const float* k, const float* v, float* out,
-                                 int H, int KV, int hd, int pos_offset, const int* pos_ptr, int max_keys,
-                                 float scale) {
+__global__ void attention_kernel(const float* q, const float* k, const float* v, float* out, int H, int KV, int hd,
+                                 int pos_offset, const int* pos_ptr, int max_keys, float scale) {
     extern __shared__ float scores[];  // [nvalid]
     __shared__ float red[32];
 
@@ -440,27 +441,24 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
     float* oh = out + (static_cast<size_t>(t) * H + h) * hd;
     for (int d = threadIdx.x; d < hd; d += blockDim.x) {
         float acc = 0.f;
-        for (int j = 0; j < nvalid; ++j)
-            acc += scores[j] * v[j * kv_stride + static_cast<size_t>(kvh) * hd + d];
+        for (int j = 0; j < nvalid; ++j) acc += scores[j] * v[j * kv_stride + static_cast<size_t>(kvh) * hd + d];
         oh[d] = acc * inv;
     }
 }
 
-Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads,
-                 int num_kv_heads, int head_dim, int pos_offset, const int* d_pos) {
+Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads, int num_kv_heads, int head_dim,
+                 int pos_offset, const int* d_pos) {
     if (num_heads <= 0 || num_kv_heads <= 0 || head_dim <= 0 || num_heads % num_kv_heads != 0)
         throw std::invalid_argument("attention: num_heads must be a multiple of num_kv_heads");
     if (pos_offset < 0) throw std::invalid_argument("attention: negative pos_offset");
-    if (q.ndim() != 2 || k.ndim() != 2 || v.ndim() != 2)
-        throw std::invalid_argument("attention: q, k, v must be 2D");
+    if (q.ndim() != 2 || k.ndim() != 2 || v.ndim() != 2) throw std::invalid_argument("attention: q, k, v must be 2D");
     if (q.dim(1) != num_heads * head_dim || k.dim(1) != num_kv_heads * head_dim ||
         v.dim(1) != num_kv_heads * head_dim || k.dim(0) != v.dim(0))
         throw std::invalid_argument("attention: shape mismatch");
     const int T = q.dim(0), S = k.dim(0);
     // With the position on the device the host does not know it: size shared memory for the whole cache
     // (S keys); the kernel itself validates the position (see attention_kernel).
-    if (!d_pos && S < pos_offset + T)
-        throw std::invalid_argument("attention: need S >= pos_offset + T");
+    if (!d_pos && S < pos_offset + T) throw std::invalid_argument("attention: need S >= pos_offset + T");
     if (S > kMaxAttentionKeys)
         throw std::invalid_argument("attention: too many keys (" + std::to_string(S) + " > " +
                                     std::to_string(kMaxAttentionKeys) + ")");

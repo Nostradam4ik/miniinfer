@@ -27,7 +27,9 @@ TEST(tensor_from_host_wrong_size_throws) {
     CHECK_THROWS(Tensor::from_host(h, {2, 3}));
 }
 
-TEST(tensor_negative_dim_throws) { CHECK_THROWS(Tensor({-1, 3})); }
+TEST(tensor_negative_dim_throws) {
+    CHECK_THROWS(Tensor({-1, 3}));
+}
 
 TEST(tensor_move_transfers_ownership) {
     Tensor a = Tensor::from_host({1.f, 2.f, 3.f, 4.f}, {2, 2});

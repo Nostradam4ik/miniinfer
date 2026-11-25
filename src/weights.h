@@ -68,9 +68,7 @@ public:
         return v;
     }
 
-    Tensor to_gpu(const std::string& name) const {
-        return Tensor::from_host(floats(name), entry(name).shape);
-    }
+    Tensor to_gpu(const std::string& name) const { return Tensor::from_host(floats(name), entry(name).shape); }
 
 private:
     void read_raw(uint64_t offset, void* dst, size_t bytes) const {

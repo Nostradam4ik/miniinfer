@@ -31,19 +31,30 @@ int main(int argc, char** argv) {
                 if (i + 1 >= argc) throw std::invalid_argument("missing value for " + a);
                 return argv[++i];
             };
-            if (a == "--steps") steps = std::stoi(next());
-            else if (a == "--no-pool") pool = false;
-            else if (a == "--graph") use_graph = true;
-            else if (a == "--model") model_dir = next();
-            else if (a == "--ids") ids_str = next();
+            if (a == "--steps")
+                steps = std::stoi(next());
+            else if (a == "--no-pool")
+                pool = false;
+            else if (a == "--graph")
+                use_graph = true;
+            else if (a == "--model")
+                model_dir = next();
+            else if (a == "--ids")
+                ids_str = next();
             else if (a == "--dtype") {
                 const std::string t = next();
-                if (t == "f32") dtype = DType::F32;
-                else if (t == "f16") dtype = DType::F16;
-                else if (t == "bf16") dtype = DType::BF16;
-                else throw std::invalid_argument("--dtype must be f32, f16 or bf16");
-            } else if (a == "--vec") gemv_set_vec_override(std::stoi(next()));
-            else throw std::invalid_argument("unknown option: " + a);
+                if (t == "f32")
+                    dtype = DType::F32;
+                else if (t == "f16")
+                    dtype = DType::F16;
+                else if (t == "bf16")
+                    dtype = DType::BF16;
+                else
+                    throw std::invalid_argument("--dtype must be f32, f16 or bf16");
+            } else if (a == "--vec")
+                gemv_set_vec_override(std::stoi(next()));
+            else
+                throw std::invalid_argument("unknown option: " + a);
         }
         std::vector<int> ids;
         {

@@ -50,9 +50,9 @@ struct ModelConfig {
 
 // Projection weights are stored already transposed ([in x out]), so y = x * W needs no extra steps.
 struct LayerWeights {
-    Tensor in_norm, post_norm;                // [hidden]
-    Tensor wq, wk, wv, wo;                    // [hidden x q_dim], [hidden x kv_dim] x2, [q_dim x hidden]
-    Tensor w_gate, w_up, w_down;              // [hidden x inter] x2, [inter x hidden]
+    Tensor in_norm, post_norm;    // [hidden]
+    Tensor wq, wk, wv, wo;        // [hidden x q_dim], [hidden x kv_dim] x2, [q_dim x hidden]
+    Tensor w_gate, w_up, w_down;  // [hidden x inter] x2, [inter x hidden]
     // wq|wk|wv concatenated by columns: [hidden x (q_dim + 2*kv_dim)]. Needed by the KV-cache path,
     // where QKV is a single matmul. Duplicates the memory of wq/wk/wv (~2 MB per layer), because wq/wk/wv
     // stay for the uncached reference path (decoder_layer).
@@ -82,8 +82,8 @@ inline LayerWeights load_layer(const TensorFile& f, int i) {
 // tiny and RMSNorm precision matters. There is no uncached reference path for these weights,
 // only the KV-cache path (decoder_layer_cached).
 struct LayerWeightsLP {
-    Tensor in_norm, post_norm;                      // [hidden], fp32
-    LowpMatrix wqkv, wo, w_gate, w_up, w_down;      // same shapes as in LayerWeights
+    Tensor in_norm, post_norm;                  // [hidden], fp32
+    LowpMatrix wqkv, wo, w_gate, w_up, w_down;  // same shapes as in LayerWeights
 };
 
 inline LayerWeightsLP load_layer_lowp(const TensorFile& f, int i, DType dt, LowpStats* stats = nullptr) {
@@ -91,7 +91,7 @@ inline LayerWeightsLP load_layer_lowp(const TensorFile& f, int i, DType dt, Lowp
     LayerWeightsLP w;
     w.in_norm = f.to_gpu(p + "input_layernorm.weight");
     w.post_norm = f.to_gpu(p + "post_attention_layernorm.weight");
-    {   // the temporary fp32 copies live only inside this block
+    {  // the temporary fp32 copies live only inside this block
         Tensor wq = transpose(f.to_gpu(p + "self_attn.q_proj.weight"));
         Tensor wk = transpose(f.to_gpu(p + "self_attn.k_proj.weight"));
         Tensor wv = transpose(f.to_gpu(p + "self_attn.v_proj.weight"));
@@ -112,8 +112,7 @@ inline Tensor mlp_forward(const Tensor& x, const LayerWeights& w) {
 }
 
 // Self-attention block without the residual: ctx = attention(rope(q), rope(k), v), then o_proj.
-inline Tensor attention_forward(const Tensor& x, const LayerWeights& w, const ModelConfig& c,
-                                int pos_offset = 0) {
+inline Tensor attention_forward(const Tensor& x, const LayerWeights& w, const ModelConfig& c, int pos_offset = 0) {
     Tensor q = rope(matmul(x, w.wq), c.num_heads, c.head_dim, c.rope_theta, pos_offset);
     Tensor k = rope(matmul(x, w.wk), c.num_kv_heads, c.head_dim, c.rope_theta, pos_offset);
     Tensor v = matmul(x, w.wv);
@@ -125,8 +124,7 @@ inline Tensor attention_forward(const Tensor& x, const LayerWeights& w, const Mo
 //   x1  = x  + attention(rmsnorm(x))
 //   out = x1 + mlp(rmsnorm(x1))
 // No KV cache here: k, v are computed from the whole sequence x (the cached path is below).
-inline Tensor decoder_layer(const Tensor& x, const LayerWeights& w, const ModelConfig& c,
-                            int pos_offset = 0) {
+inline Tensor decoder_layer(const Tensor& x, const LayerWeights& w, const ModelConfig& c, int pos_offset = 0) {
     Tensor x1 = add(x, attention_forward(rmsnorm(x, w.in_norm, c.rms_norm_eps), w, c, pos_offset));
     return add(x1, mlp_forward(rmsnorm(x1, w.post_norm, c.rms_norm_eps), w));
 }
@@ -135,13 +133,12 @@ inline Tensor decoder_layer(const Tensor& x, const LayerWeights& w, const ModelC
 // 0..length-1. New tokens are appended at the end, so each generation step only computes those.
 struct KVCache {
     int max_seq = 0;
-    int length = 0;  // how many positions are cached
+    int length = 0;            // how many positions are cached
     std::vector<Tensor> k, v;  // per layer: [max_seq x kv_dim]
 
     KVCache(const ModelConfig& c, int max_seq_) : max_seq(max_seq_) {
         if (max_seq_ <= 0 || max_seq_ > kMaxAttentionKeys)
-            throw std::invalid_argument("KVCache: max_seq must be in [1, " +
-                                        std::to_string(kMaxAttentionKeys) + "]");
+            throw std::invalid_argument("KVCache: max_seq must be in [1, " + std::to_string(kMaxAttentionKeys) + "]");
         const int kv_dim = c.num_kv_heads * c.head_dim;
         for (int i = 0; i < c.num_layers; ++i) {
             k.emplace_back(std::vector<int>{max_seq_, kv_dim});
@@ -164,14 +161,15 @@ struct KVCache {
 // d_pos != nullptr: the position is read from device memory (pos_offset is then ignored); needed for
 // the CUDA graph (see graph.cuh).
 template <class LW>
-inline Tensor decoder_layer_cached(const Tensor& x, const LW& w, const ModelConfig& c,
-                                   KVCache& cache, int layer, int pos_offset, const int* d_pos = nullptr) {
-    if (WeightRef(w.wqkv).rows == 0) throw std::invalid_argument("decoder_layer_cached: wqkv is empty (call build_fused())");
+inline Tensor decoder_layer_cached(const Tensor& x, const LW& w, const ModelConfig& c, KVCache& cache, int layer,
+                                   int pos_offset, const int* d_pos = nullptr) {
+    if (WeightRef(w.wqkv).rows == 0)
+        throw std::invalid_argument("decoder_layer_cached: wqkv is empty (call build_fused())");
     Tensor qkv = rmsnorm_matmul(x, w.in_norm, c.rms_norm_eps, w.wqkv);
-    Tensor q = rope_qkv_to_cache(qkv, c.num_heads, c.num_kv_heads, c.head_dim, c.rope_theta, pos_offset,
-                                 cache.k[layer], cache.v[layer], d_pos);
-    Tensor ctx = attention(q, cache.k[layer], cache.v[layer], c.num_heads, c.num_kv_heads, c.head_dim, pos_offset,
-                           d_pos);
+    Tensor q = rope_qkv_to_cache(qkv, c.num_heads, c.num_kv_heads, c.head_dim, c.rope_theta, pos_offset, cache.k[layer],
+                                 cache.v[layer], d_pos);
+    Tensor ctx =
+        attention(q, cache.k[layer], cache.v[layer], c.num_heads, c.num_kv_heads, c.head_dim, pos_offset, d_pos);
     Tensor x1 = matmul_residual(ctx, w.wo, x);
     Tensor act = rmsnorm_gate_up(x1, w.post_norm, c.rms_norm_eps, w.w_gate, w.w_up);
     return matmul_residual(act, w.w_down, x1);
@@ -184,8 +182,8 @@ inline Tensor forward_cached_impl(const ModelConfig& cfg, WeightRef embed, const
                                   KVCache& cache, bool last_only) {
     if (ids.empty()) throw std::invalid_argument("Model::forward_cached: empty input");
     if (static_cast<long long>(cache.length) + static_cast<long long>(ids.size()) > cache.max_seq)
-        throw std::invalid_argument("Model::forward_cached: KV cache is full (" + std::to_string(cache.length) +
-                                    " + " + std::to_string(ids.size()) + " > " + std::to_string(cache.max_seq) + ")");
+        throw std::invalid_argument("Model::forward_cached: KV cache is full (" + std::to_string(cache.length) + " + " +
+                                    std::to_string(ids.size()) + " > " + std::to_string(cache.max_seq) + ")");
     if (static_cast<int>(cache.k.size()) != cfg.num_layers)
         throw std::invalid_argument("Model::forward_cached: cache does not match model");
     const int pos = cache.length;
@@ -201,8 +199,8 @@ inline Tensor forward_cached_impl(const ModelConfig& cfg, WeightRef embed, const
 // Returns logits [1 x vocab]. The caller maintains the cache length (cache.length).
 template <class LW>
 inline Tensor forward_decode_dev(const ModelConfig& cfg, WeightRef embed, const std::vector<LW>& layers,
-                                 const Tensor& final_norm, WeightRef lm_head, const int* d_token,
-                                 const int* d_pos, KVCache& cache) {
+                                 const Tensor& final_norm, WeightRef lm_head, const int* d_token, const int* d_pos,
+                                 KVCache& cache) {
     if (static_cast<int>(cache.k.size()) != cfg.num_layers)
         throw std::invalid_argument("forward_decode_dev: cache does not match model");
     Tensor h = embedding_dev(embed, d_token, 1);
@@ -219,8 +217,8 @@ struct Model {
     Tensor final_norm;  // [hidden], always fp32
 
     // dtype == F32:
-    Tensor embed;       // [vocab x hidden]
-    Tensor lm_head;     // [hidden x vocab] (already transposed; with tied weights = embed^T)
+    Tensor embed;    // [vocab x hidden]
+    Tensor lm_head;  // [hidden x vocab] (already transposed; with tied weights = embed^T)
     std::vector<LayerWeights> layers;
 
     // dtype == F16 or BF16:
@@ -244,7 +242,7 @@ struct Model {
             m.layers.reserve(m.cfg.num_layers);
             for (int i = 0; i < m.cfg.num_layers; ++i) m.layers.push_back(load_layer(f, i));
         } else {
-            {   // the fp32 copy of the embedding only exists here, to build embedding and lm_head from it
+            {  // the fp32 copy of the embedding only exists here, to build embedding and lm_head from it
                 Tensor embed32 = f.to_gpu("model.embed_tokens.weight");
                 m.embed_lp = to_lowp(embed32, dt, &m.lowp_stats);
                 if (m.cfg.tie_word_embeddings)
