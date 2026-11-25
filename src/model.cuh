@@ -209,6 +209,13 @@ inline Tensor forward_decode_dev(const ModelConfig& cfg, WeightRef embed, const 
     return rmsnorm_matmul(h, final_norm, cfg.rms_norm_eps, lm_head);
 }
 
+// The value of the --prefill-matmul command line option. Throws std::invalid_argument for anything else.
+inline MatmulKind parse_prefill_matmul(const std::string& s) {
+    if (s == "reg") return MatmulKind::Reg;
+    if (s == "wmma") return MatmulKind::Wmma;
+    throw std::invalid_argument("--prefill-matmul must be reg or wmma");
+}
+
 // Full model: embedding -> decoder layers -> final RMSNorm -> lm_head.
 // The weights live in GPU memory; loading reads model/weights.bin. The weight format is chosen at load
 // time: fp32 (reference) or fp16/bf16 (half the memory and traffic per token).

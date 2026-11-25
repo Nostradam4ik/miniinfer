@@ -32,6 +32,12 @@ def main():
         help="weight format (bf16: half the memory, no precision loss)",
     )
     ap.add_argument("--no-graph", action="store_true", help="do not use a CUDA graph for decoding")
+    ap.add_argument(
+        "--prefill-matmul",
+        choices=["reg", "wmma"],
+        default="reg",
+        help="matmul of the prefill; wmma uses tensor cores (bf16 weights only, rounds activations to bf16)",
+    )
     ap.add_argument("--exe", default=os.path.join(ROOT, "build", "generate.exe"))
     ap.add_argument("--model", default=os.path.join(ROOT, "model"))
     args = ap.parse_args()
@@ -61,6 +67,8 @@ def main():
         str(args.seed),
         "--dtype",
         args.dtype,
+        "--prefill-matmul",
+        args.prefill_matmul,
     ]
     if not args.no_graph:
         cmd.append("--graph")

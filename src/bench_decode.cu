@@ -1,6 +1,7 @@
 // bench_decode.exe - speed of prefill and of single-token decoding.
 //
 //   bench_decode.exe [--steps 64] [--no-pool] [--model model] [--ids "504 3575 282 4649 314"]
+//                    [--dtype f32|f16|bf16] [--graph] [--prefill-matmul reg|wmma]
 //
 // Each decode step is timed separately, including the copy of the logits to the CPU. Picking the argmax
 // is not timed (llama-bench does not time sampling either). Prints the median and the mean, plus how much
@@ -25,6 +26,7 @@ int main(int argc, char** argv) {
         bool pool = true;
         bool use_graph = false;
         DType dtype = DType::F32;
+        MatmulKind prefill_matmul = MatmulKind::Reg;
         for (int i = 1; i < argc; ++i) {
             const std::string a = argv[i];
             auto next = [&]() -> std::string {
@@ -35,6 +37,8 @@ int main(int argc, char** argv) {
                 steps = std::stoi(next());
             else if (a == "--no-pool")
                 pool = false;
+            else if (a == "--prefill-matmul")
+                prefill_matmul = parse_prefill_matmul(next());
             else if (a == "--graph")
                 use_graph = true;
             else if (a == "--model")
@@ -66,8 +70,10 @@ int main(int argc, char** argv) {
 
         GpuAllocator::instance().set_pooling(pool);
         Model model = Model::load(model_dir, dtype);
+        model.set_prefill_matmul(prefill_matmul);
         std::printf("weights: %s, %.0f MB | pool: %s | prompt: %zu tokens | steps: %d\n", dtype_name(dtype),
                     model.weight_bytes() / 1e6, pool ? "on" : "off", ids.size(), steps);
+        std::printf("prefill matmul: %s\n", prefill_matmul == MatmulKind::Wmma ? "wmma" : "reg");
         if (dtype != DType::F32)
             std::printf("conversion: %zu elements, %zu overflow, %zu flushed to zero, max relative error %.2e\n",
                         model.lowp_stats.elements, model.lowp_stats.overflow, model.lowp_stats.flushed,

@@ -17,6 +17,8 @@ static void usage() {
                  "  --model DIR     model directory (default: model)\n"
                  "  --dtype T       weight format: f32, f16 or bf16 (default: f32)\n"
                  "  --graph         run decode steps through a CUDA graph (faster)\n"
+                 "  --prefill-matmul reg|wmma  matmul of the prefill; wmma: tensor cores, bf16 weights\n"
+                 "                  only, rounds activations to bf16 (default: reg)\n"
                  "  --max N         new tokens to generate (default: 64)\n"
                  "  --temp T        temperature; 0 = greedy (default: 0)\n"
                  "  --top-k K       keep K most likely tokens; 0 = off (default: 0)\n"
@@ -42,6 +44,7 @@ int main(int argc, char** argv) {
     try {
         std::string model_dir = "model";
         DType dtype = DType::F32;
+        MatmulKind prefill_matmul = MatmulKind::Reg;
         std::vector<int> ids;
         GenerateOptions opt;
         for (int i = 1; i < argc; ++i) {
@@ -65,7 +68,9 @@ int main(int argc, char** argv) {
                     dtype = DType::BF16;
                 else
                     throw std::invalid_argument("--dtype must be f32, f16 or bf16");
-            } else if (a == "--graph")
+            } else if (a == "--prefill-matmul")
+                prefill_matmul = parse_prefill_matmul(next());
+            else if (a == "--graph")
                 opt.use_graph = true;
             else if (a == "--ids")
                 ids = parse_ids(next());
@@ -90,6 +95,7 @@ int main(int argc, char** argv) {
         }
 
         Model model = Model::load(model_dir, dtype);
+        model.set_prefill_matmul(prefill_matmul);
         GenerateResult res = generate(model, ids, opt, [](int t) {
             std::printf("tok %d\n", t);
             std::fflush(stdout);
