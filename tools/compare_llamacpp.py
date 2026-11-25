@@ -37,8 +37,8 @@ def mini_decode(exe, steps, graph):
     return 1000.0 / float(re.search(r"decode per token: .*?mean ([\d.]+) ms", run(cmd)).group(1))
 
 
-def mini_prefill(exe, n):
-    out = run([exe, "--dtype", "bf16", "--steps", "1", "--ids", prompt_ids(n)])
+def mini_prefill(exe, n, matmul="reg"):
+    out = run([exe, "--dtype", "bf16", "--steps", "1", "--ids", prompt_ids(n), "--prefill-matmul", matmul])
     return n * 1000.0 / float(re.search(r"prefill \(\d+ tokens\): ([\d.]+) ms", out).group(1))
 
 
@@ -59,6 +59,11 @@ def main():
     ap.add_argument("--llama-bench", required=True)
     ap.add_argument("--gguf", action="append", required=True, help="may be given several times")
     ap.add_argument("--mini", default=os.path.join(ROOT, "build", "bench_decode.exe"))
+    ap.add_argument(
+        "--mini-wmma",
+        action="store_true",
+        help="also measure MiniInfer prefill on tensor cores (it rounds activations to bf16)",
+    )
     ap.add_argument("--rounds", type=int, default=7)
     ap.add_argument("--steps", type=int, default=128)
     ap.add_argument("--prefill", type=int, nargs="+", default=[128, 512])
@@ -75,6 +80,8 @@ def main():
         jobs[("decode", name)] = lambda g=g: llama(args.llama_bench, g, 0, args.steps)
     for n in args.prefill:
         jobs[(f"prefill {n}", "MiniInfer bf16")] = lambda n=n: mini_prefill(args.mini, n)
+        if args.mini_wmma:
+            jobs[(f"prefill {n}", "MiniInfer bf16 wmma")] = lambda n=n: mini_prefill(args.mini, n, "wmma")
         for g in args.gguf:
             name = "llama.cpp " + os.path.splitext(os.path.basename(g))[0].split("-")[-1]
             jobs[(f"prefill {n}", name)] = lambda g=g, n=n: llama(args.llama_bench, g, n, 0)

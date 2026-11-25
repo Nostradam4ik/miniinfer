@@ -61,6 +61,7 @@ Python commands use the virtual environment from the README. On Windows `build.b
 | `src/gpu_alloc.cuh` | Pooled allocator and `GpuArena` for CUDA Graph buffers |
 | `src/cuda_utils.cuh` | `CUDA_CHECK`, `exec_stream()`, event timer |
 | `src/ops.cu`, `src/ops.cuh` | Matmul variants, attention, RoPE, RMSNorm, embedding |
+| `src/wmma.cu`, `src/wmma.h` | Tensor core matmul, opt-in for prefill; rounds activations to bf16 |
 | `src/gemv.cu` | Bandwidth-oriented GEMV kernels for decoding (M <= 4) |
 | `src/ops_fused.cu` | Fused decode operations; fall back to separate ops for larger M |
 | `src/lowp.cu`, `src/wt_convert.cuh` | fp16/bf16 weights and conversion |

@@ -7,19 +7,22 @@ to understand where the time goes in LLM decoding.
 
 **Result:** decode speed went from **59 to 455 tokens/s (17.0 to 2.2 ms/token, 7.7x)** on an RTX 4060 Laptop,
 and every step was checked against PyTorch (logits match to ~1e-5 relative error, greedy generation matches
-token for token).
+token for token). These statements describe the default mode. An opt-in
+[tensor core prefill](#tensor-core-prefill-opt-in) is faster and less exact.
 
 | | |
 |---|---|
 | Model | SmolLM2-135M, 30 layers, 9 query / 3 KV heads, bf16 checkpoint |
 | GPU | NVIDIA GeForce RTX 4060 Laptop (Ada, sm_89, 8 GB, ~256 GB/s) |
 | Decode speed | 2.2 ms/token, ~455 tok/s (bf16 weights + CUDA Graph) |
-| Correctness | logits within 1.05e-5 of PyTorch; CUDA Graph path is bitwise identical to the eager path |
-| Tests | 154 checks (`tests.exe`), including comparison against PyTorch activations |
+| Correctness (default mode) | logits within 1.05e-5 of PyTorch; CUDA Graph path is bitwise identical to the eager path |
+| Tests | 166 checks (`tests.exe`), including comparison against PyTorch activations |
 
-**Against llama.cpp** (same model, bf16, same GPU): single-token decode is **1.12x faster** than llama.cpp
-(433 vs 387 tok/s), but prefill is **1.7x to 2.9x slower** (128 and 512 tokens). Details and caveats are
-[below](#comparison-with-llamacpp).
+**Against llama.cpp** (same model, bf16, same GPU): single-token decode is **1.10x faster** than llama.cpp
+(407 vs 369 tok/s), but prefill in the default mode is **1.3x to 2.5x slower** (128 and 512 tokens). With the
+opt-in tensor core prefill, which rounds activations to bf16, it is **1.7x slower** at 512 tokens; at 128
+tokens llama.cpp varied too much in this run to compare. The ratios differ between runs. Details and caveats
+are [below](#comparison-with-llamacpp).
 
 ## Comparison with llama.cpp
 
@@ -29,41 +32,45 @@ tok/s, min to max in parentheses. Decode is 128 single-token steps.
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|
-| **MiniInfer bf16** (CUDA Graph for decode) | **433** (429-455) | 8,477 (8,432-8,516) | 9,314 (9,282-9,331) |
-| MiniInfer bf16, no graph | 358 (353-370) | | |
-| llama.cpp BF16 | 387 (386-397) | **14,468** (14,113-14,737) | **26,873** (25,028-27,871) |
-| llama.cpp Q8_0 | 456 (442-489) | 12,716 (11,166-12,940) | 27,801 (27,215-29,261) |
-| llama.cpp Q4_K_M | 453 (441-468) | 11,264 (8,204-11,370) | 26,355 (24,455-27,622) |
+| **MiniInfer bf16** (CUDA Graph for decode) | **407** (388-441) | 8,460 (8,226-8,482) | 9,294 (9,149-9,329) |
+| MiniInfer bf16, no graph | 342 (188-360) | | |
+| MiniInfer bf16, `wmma` prefill (rounds activations to bf16) | | 12,561 (10,847-12,673) | 13,502 (13,152-13,534) |
+| llama.cpp BF16 | 369 (336-378) | 11,282 (6,932-13,075) | **23,132** (21,930-23,782) |
+| llama.cpp Q8_0 | 429 (417-461) | 11,366 (9,219-11,925) | 23,868 (22,968-24,514) |
+| llama.cpp Q4_K_M | 446 (403-462) | 10,265 (9,879-11,036) | 20,429 (18,413-23,020) |
 
 **Method.** [tools/compare_llamacpp.py](tools/compare_llamacpp.py) alternates the engines, rotating the order
 each round, so thermal and clock drift of the laptop GPU affects all of them. Both sides report the *mean*
 per-token time of a run (`llama-bench` reports a mean). Neither side times sampling; MiniInfer's decode time
-includes copying the logits to the host. Greedy output of MiniInfer and llama.cpp BF16 was identical on 3
-prompts of 60 tokens each.
+includes copying the logits to the host. Greedy output of MiniInfer (default mode, an earlier build) and
+llama.cpp BF16 was identical on 3 prompts of 60 tokens each.
 
 **How to read it.**
 
 - The decode lead is **not** evidence that this engine is better than llama.cpp. MiniInfer is hard-wired for
   one architecture and replays one CUDA Graph; llama.cpp is a general engine that supports many
-  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (358 vs 387), and
+  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (342 vs 369), and
   quantized llama.cpp is faster than MiniInfer even with the graph.
-- Prefill is the clear weakness: llama.cpp BF16 is 1.7x faster at 128 tokens and 2.9x faster at 512. In a
-  trace of an earlier build the large-batch matmuls alone took ~30 ms at 512 tokens (see [Prefill](#prefill));
-  the later matmul change made them about 8% faster under tracing. That is still more than the whole llama.cpp
-  BF16 prefill (~19 ms).
-- Compare numbers only within one run. In an earlier run of the same script, with the same llama.cpp build,
-  llama.cpp BF16 prefill was 12,122 and 23,017 tok/s, so its lead looked smaller although MiniInfer was
-  slower then. The cause of that difference is not known.
+- Prefill is the clear weakness. In the default mode llama.cpp BF16 is 1.3x faster at 128 tokens and 2.5x
+  faster at 512. With `wmma` it is still 1.7x faster at 512.
+- The 128-token column does not rank the engines in this run: the `wmma` median is above the llama.cpp BF16
+  median, but llama.cpp ranged from 6,932 to 13,075 tok/s, and in two earlier runs its median was 12,122 and
+  14,468.
+- The `wmma` row is not the same computation as the default: it rounds activations to bf16 (see
+  [below](#tensor-core-prefill-opt-in) for what that changes). How llama.cpp rounds its activations was not
+  checked.
+- Compare numbers only within one run. With the same llama.cpp build, three runs of the script gave llama.cpp
+  BF16 prefill medians of 23,017, 26,873 and 23,132 tok/s at 512 tokens. The cause is not known.
 - Not identical settings: llama.cpp ran with its defaults, which store the KV cache in fp16 (MiniInfer uses
   fp32) and keep the token embedding lookup on the CPU.
-- Quantized llama.cpp is only 17-18% faster than its own bf16 in decode here, although the weights are much
+- Quantized llama.cpp is only 16-21% faster than its own bf16 in decode here, although the weights are much
   smaller. For a model this small, memory bandwidth is not the only limit.
 - One laptop GPU, Windows, one tiny model. Do not extrapolate to larger models or batched serving.
 
 To reproduce:
 
 ```
-.venv\Scripts\python.exe tools\compare_llamacpp.py --llama-bench <path>\llama-bench.exe --gguf <path>\SmolLM2-135M-BF16.gguf
+.venv\Scripts\python.exe tools\compare_llamacpp.py --mini-wmma --llama-bench <path>\llama-bench.exe --gguf <path>\SmolLM2-135M-BF16.gguf
 ```
 
 ## What is implemented
@@ -72,6 +79,8 @@ To reproduce:
   allocator for CUDA Graph buffers.
 - **Matmul kernels:** naive, shared-memory tiled, and 4x4 register-tiled (benchmarked against cuBLAS),
   plus a bandwidth-oriented **GEMV** kernel for decoding (M <= 4) with vectorized loads.
+- **Tensor core matmul (opt-in):** a WMMA kernel with bf16 inputs and fp32 accumulation for prefill, see
+  [below](#tensor-core-prefill-opt-in).
 - **Transformer ops:** RMSNorm, RoPE, causal attention with GQA and KV cache, SiLU-gated MLP, embedding.
 - **Fused kernels for decoding:** rmsnorm+QKV, RoPE+KV-cache write, o_proj+residual, rmsnorm+gate+up+SiLU,
   down+residual. 455 kernel launches per token became 184.
@@ -147,10 +156,54 @@ token did not change beyond the run-to-run spread, and after each of the two cha
   standalone harness this was 22-24% faster, but inside the model the gain is much smaller (table above). The
   cause of the difference is not known.
 
+### Tensor core prefill (opt-in)
+
+`--prefill-matmul wmma` (`generate.exe`, `bench_decode.exe`, `tools/chat.py`) runs the large matmuls of the
+prefill on tensor cores with a WMMA kernel ([src/wmma.cu](src/wmma.cu)). It needs bf16 weights and a GPU of
+compute capability 8.0 or newer. The default is `reg`, whose results this mode does not change. Single-token
+decoding does not use it.
+
+The price is accuracy: the tensor cores take bf16 inputs, so the activations are rounded from fp32 to bf16
+(the weights are bf16 already). Speed and accuracy belong together:
+
+**Speed.** One prefill in ms, `bench_decode.exe --dtype bf16`, median of 7 rounds that alternated the
+variants:
+
+| Prompt tokens | `reg` | `wmma` | Time saved |
+|---|---|---|---|
+| 32 | 11.16 | 7.72 | 31% |
+| 128 | 15.13 | 10.12 | 33% |
+| 512 | 54.89 | 37.89 | 31% |
+| 1024 | 141.5 | 109.6 | unreliable, see below |
+
+At 1024 tokens the timings were unstable (`reg` 120.7-142.6 ms, `wmma` 97.7-120.6 ms, and the previous build,
+which runs the same code as `reg`, had a median of 130.3 ms). Decode time per token did not change beyond the
+spread.
+
+**Accuracy.** A 497-token English text, written for this project, compared with PyTorch (fp32):
+
+| | `reg` | `wmma` |
+|---|---|---|
+| Positions with the same most likely next token | 497 of 497 | 492 of 497 (99.0%) |
+| Largest logit difference | 2.8e-4 | 0.79 |
+| Mean logit difference | 1.7e-5 | 0.056 |
+| Largest difference relative to the largest logit | 7.2e-6 | 2.1e-2 |
+
+Logit differences are measured at every 32nd position and the last one (17 positions). For this comparison the
+logits of every position are computed, so `lm_head` also runs on tensor cores; in generation it does not. On 3
+short prompts (5, 15 and 7 tokens), 60 greedy tokens were the same with `reg` and `wmma`. This is one text and
+three prompts: it does not show that the output stays the same on other input.
+
+The kernel is tested against a double-precision CPU product of the bf16-rounded inputs, which separates kernel
+bugs from the cost of the format. All logits of a 512-token prefill in the default mode are bitwise identical
+to the build before the kernel was added.
+
 ### What is left on the table
 
-- Prefill: 1.7x (128 tokens) to 2.9x (512 tokens) behind llama.cpp BF16, the largest known gap. The tiled
-  matmul and attention are still the two largest costs.
+- Prefill: in the default mode 1.3x (128 tokens) to 2.5x (512 tokens) behind llama.cpp BF16 in the latest
+  run, and 1.7x at 512 with `wmma`. This is the largest known gap.
+- The WMMA kernel is simple: `mma.sync` and `ldmatrix` in PTX, and a better tile choice for short prompts,
+  were not tried.
 - Device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est. 0.1-0.3 ms).
 - Bigger fusions to cut the ~0.9 ms of small-kernel latency.
 - int8/int4 weights (the quantized llama.cpp results suggest a modest decode gain on a model this small).
@@ -231,6 +284,8 @@ How correctness is established:
   go unnoticed;
 - the difference helper treats NaN as a failure (`std::fmax` silently ignores NaN);
 - the CUDA Graph path is checked for bitwise equality with the eager path in fp32, fp16 and bf16;
+- the opt-in tensor core mode is not expected to match: its accuracy is measured and
+  [reported](#tensor-core-prefill-opt-in);
 - bugs were injected on purpose (mutation checks) to confirm that the tests actually fail.
 
 ## Development
