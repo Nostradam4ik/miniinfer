@@ -15,10 +15,10 @@ token for token).
 | GPU | NVIDIA GeForce RTX 4060 Laptop (Ada, sm_89, 8 GB, ~256 GB/s) |
 | Decode speed | 2.2 ms/token, ~455 tok/s (bf16 weights + CUDA Graph) |
 | Correctness | logits within 1.05e-5 of PyTorch; CUDA Graph path is bitwise identical to the eager path |
-| Tests | 153 checks (`tests.exe`), including comparison against PyTorch activations |
+| Tests | 154 checks (`tests.exe`), including comparison against PyTorch activations |
 
 **Against llama.cpp** (same model, bf16, same GPU): single-token decode is **1.12x faster** than llama.cpp
-(437 vs 390 tok/s), but prefill is **1.9x to 4.5x slower**. Details and caveats are
+(433 vs 387 tok/s), but prefill is **1.7x to 2.9x slower** (128 and 512 tokens). Details and caveats are
 [below](#comparison-with-llamacpp).
 
 ## Comparison with llama.cpp
@@ -29,11 +29,11 @@ tok/s, min to max in parentheses. Decode is 128 single-token steps.
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|
-| **MiniInfer bf16** (CUDA Graph for decode) | **441** (394-444) | 8,066 (8,005-8,112) | 8,917 (8,914-8,937) |
-| MiniInfer bf16, no graph | 340 (270-357) | | |
-| llama.cpp BF16 | 368 (359-378) | **12,122** (10,923-13,643) | **23,017** (22,026-23,730) |
-| llama.cpp Q8_0 | 448 (428-472) | 11,224 (9,490-11,830) | 24,268 (23,210-25,987) |
-| llama.cpp Q4_K_M | 470 (459-481) | 10,043 (9,889-10,270) | 23,099 (19,244-23,853) |
+| **MiniInfer bf16** (CUDA Graph for decode) | **433** (429-455) | 8,477 (8,432-8,516) | 9,314 (9,282-9,331) |
+| MiniInfer bf16, no graph | 358 (353-370) | | |
+| llama.cpp BF16 | 387 (386-397) | **14,468** (14,113-14,737) | **26,873** (25,028-27,871) |
+| llama.cpp Q8_0 | 456 (442-489) | 12,716 (11,166-12,940) | 27,801 (27,215-29,261) |
+| llama.cpp Q4_K_M | 453 (441-468) | 11,264 (8,204-11,370) | 26,355 (24,455-27,622) |
 
 **Method.** [tools/compare_llamacpp.py](tools/compare_llamacpp.py) alternates the engines, rotating the order
 each round, so thermal and clock drift of the laptop GPU affects all of them. Both sides report the *mean*
@@ -45,14 +45,18 @@ prompts of 60 tokens each.
 
 - The decode lead is **not** evidence that this engine is better than llama.cpp. MiniInfer is hard-wired for
   one architecture and replays one CUDA Graph; llama.cpp is a general engine that supports many
-  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (340 vs 368), and
+  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (358 vs 387), and
   quantized llama.cpp is faster than MiniInfer even with the graph.
-- Prefill is the clear weakness: llama.cpp BF16 is 1.5x faster at 128 tokens and 2.6x faster at 512. At 512
-  tokens the large-batch matmuls alone take ~30 ms (see [Prefill](#prefill)), more than the whole llama.cpp
-  BF16 prefill (~22 ms).
+- Prefill is the clear weakness: llama.cpp BF16 is 1.7x faster at 128 tokens and 2.9x faster at 512. In a
+  trace of an earlier build the large-batch matmuls alone took ~30 ms at 512 tokens (see [Prefill](#prefill));
+  the later matmul change made them about 8% faster under tracing. That is still more than the whole llama.cpp
+  BF16 prefill (~19 ms).
+- Compare numbers only within one run. In an earlier run of the same script, with the same llama.cpp build,
+  llama.cpp BF16 prefill was 12,122 and 23,017 tok/s, so its lead looked smaller although MiniInfer was
+  slower then. The cause of that difference is not known.
 - Not identical settings: llama.cpp ran with its defaults, which store the KV cache in fp16 (MiniInfer uses
   fp32) and keep the token embedding lookup on the CPU.
-- Quantized llama.cpp is only 22-28% faster than its own bf16 in decode here, although the weights are much
+- Quantized llama.cpp is only 17-18% faster than its own bf16 in decode here, although the weights are much
   smaller. For a model this small, memory bandwidth is not the only limit.
 - One laptop GPU, Windows, one tiny model. Do not extrapolate to larger models or batched serving.
 
@@ -114,18 +118,20 @@ I profiled before optimizing each time:
 
 ### Prefill
 
-Time of one prefill in ms, `bench_decode.exe --dtype bf16`, median of 7 rounds that alternated the two builds.
-"Before" had the scalar dot product in the attention kernel.
+Time of one prefill in ms, `bench_decode.exe --dtype bf16`, median of 7 rounds that alternated three builds:
+with the scalar dot product in the attention kernel, after the attention change, and after the later matmul
+change.
 
-| Prompt tokens | Before | After |
-|---|---|---|
-| 32 | 12.0 | 11.8 |
-| 128 | 19.4 | 15.8 |
-| 512 | 99.4 | 57.4 |
-| 1024 | 254.4 | 134.5 |
+| Prompt tokens | Scalar | + attention | + matmul |
+|---|---|---|---|
+| 32 | 11.9 | 11.7 | 11.1 |
+| 128 | 19.3 | 15.9 | 15.1 |
+| 512 | 107.5 | 57.4 | 55.0 |
+| 1024 | 250.2 | 136.9 | 135.2 |
 
-Decode time per token did not change beyond the run-to-run spread, and the prefill logits for a 512-token
-prompt are bitwise identical in bf16 and fp32.
+At 1024 tokens the last step is within the spread (126-147 ms before it, 119-137 ms after). Decode time per
+token did not change beyond the run-to-run spread, and after each of the two changes the prefill logits for a
+512-token prompt were bitwise identical in bf16 and fp32.
 
 - Tracing the prefill with Nsight Systems showed that attention dominated long prompts: 74 of 108 ms at 512
   tokens (that traced run was slower than the untraced ones). GPU idle time was under 1 ms, so kernel launches
@@ -135,13 +141,16 @@ prompt are bitwise identical in bf16 and fp32.
   help, and neither did using more threads for the weighted sum of V. The likely reason is the number of load
   instructions (neighboring threads read different keys, so their loads cannot be coalesced); it was not
   checked with hardware counters.
-- Traced again after the change, the tiled matmul is the largest cost: 12.1 of 15.8 ms at 128 tokens and 30.4
-  of 57.5 ms at 512. Attention takes 2.0 and 23.9 ms.
+- Traced again after the attention change, the tiled matmul was the largest cost: 12.1 of 15.8 ms at 128
+  tokens and 30.4 of 57.5 ms at 512. Attention took 2.0 and 23.9 ms.
+- The matmul kernel now loads four elements of A and of B per instruction when K and N are multiples of 4. In a
+  standalone harness this was 22-24% faster, but inside the model the gain is much smaller (table above). The
+  cause of the difference is not known.
 
 ### What is left on the table
 
-- Prefill: 1.5x (128 tokens) to 2.6x (512 tokens) behind llama.cpp BF16, the largest known gap. Next are the
-  tiled matmul and then attention again.
+- Prefill: 1.7x (128 tokens) to 2.9x (512 tokens) behind llama.cpp BF16, the largest known gap. The tiled
+  matmul and attention are still the two largest costs.
 - Device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est. 0.1-0.3 ms).
 - Bigger fusions to cut the ~0.9 ms of small-kernel latency.
 - int8/int4 weights (the quantized llama.cpp results suggest a modest decode gain on a model this small).
