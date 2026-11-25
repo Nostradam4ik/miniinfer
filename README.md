@@ -131,19 +131,24 @@ investigated.
 
 ## Build
 
-Requirements: Windows, Visual Studio 2022 Build Tools (C++), CUDA Toolkit 12+, CMake 3.24+, Ninja.
-The CUDA architecture is set to `89` in [CMakeLists.txt](CMakeLists.txt); change
-`CMAKE_CUDA_ARCHITECTURES` for another GPU.
+Requirements: an NVIDIA GPU, a CUDA Toolkit (developed with 13.5), CMake 3.24+, Ninja and a C++17 compiler
+(on Windows: Visual Studio 2022 or its Build Tools).
 
-From an "x64 Native Tools Command Prompt for VS 2022":
+On Windows, from any terminal, with `CUDA_PATH` pointing to the toolkit:
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+build.bat
 ```
 
-[build.bat](build.bat) does the same with the author's local paths (CUDA in `C:\Code\cuda-13.5`); edit the
-paths at the top for your machine.
+With the compiler and `nvcc` already on `PATH`:
+
+```
+cmake --preset release
+cmake --build --preset release
+```
+
+The default target is compute capability 8.9. For another GPU add `-DCMAKE_CUDA_ARCHITECTURES=<cc>`
+(or `native`) to the configure step or to `build.bat`. The GPU results here were measured on Windows only.
 
 ## Run
 
