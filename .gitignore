@@ -12,3 +12,4 @@ reference/
 __pycache__/
 cv/
 .claude/
+CLAUDE.local.md

@@ -195,6 +195,15 @@ How correctness is established:
 - the CUDA Graph path is checked for bitwise equality with the eager path in fp32, fp16 and bf16;
 - bugs were injected on purpose (mutation checks) to confirm that the tests actually fail.
 
+## Development
+
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the checks and C++/CUDA conventions;
+[AGENTS.md](AGENTS.md) gives the same project knowledge to coding agents ([CLAUDE.md](CLAUDE.md) points to it).
+`pre-commit` runs clang-format and ruff. CI has no GPU: it checks formatting, compiles the project and runs the
+CPU-only tests, so GPU correctness is verified locally.
+
+Parts of this project were developed with AI assistance (Claude Code); see the commit trailers.
+
 ## Project layout
 
 ```
