@@ -3,6 +3,7 @@
 // so errors do not accumulate and the test shows exactly which kernel diverged.
 // Without model/ or reference/ the tests are skipped (see README).
 #include <algorithm>
+#include <memory>
 #include <cstdio>
 #include "generate.h"
 #include "model.cuh"
@@ -561,4 +562,49 @@ TEST(model_prefill_setting_does_not_change_decoding) {
     const std::vector<float> with_reg = m.forward_cached({504}, first, true).to_host();
     ScopedPrefillMatmul scope(m, MatmulKind::Wmma);
     CHECK(m.forward_cached({504}, second, true).to_host() == with_reg);
+}
+
+// The accuracy of the two prefill matmuls on a long natural text, against PyTorch: how often the most likely
+// next token is the same, and the logit error at the exported positions. The logits of every position are
+// computed, so lm_head also runs through the large-M matmul; generation does not do that (it needs only the
+// last position, which uses GEMV), so this includes a little more error than generation has.
+TEST(ref_long_text_reg_and_wmma_against_pytorch) {
+    Ref* r = load_ref();
+    if (!r) return;
+    std::unique_ptr<TensorFile> longf;
+    try {
+        longf = std::make_unique<TensorFile>(std::string(MINIINFER_ROOT) + "/reference/long");
+    } catch (const std::exception& e) {
+        std::printf("       (skipped: %s; run tools/export_reference.py)\n", e.what());
+        return;
+    }
+    const std::vector<int> ids = longf->ints("long.ids"), top1 = longf->ints("long.top1"),
+                           positions = longf->ints("long.positions");
+    const std::vector<float> want = longf->floats("long.logits");
+    Model& m = bf16_model();
+    const int T = static_cast<int>(ids.size()), V = m.cfg.vocab_size;
+    CHECK(top1.size() == ids.size());
+    CHECK(want.size() == positions.size() * V);
+
+    for (MatmulKind kind : {MatmulKind::Reg, MatmulKind::Wmma}) {
+        const std::vector<float> got = prefill_logits(m, ids, kind);
+        int same = 0;
+        for (int t = 0; t < T; ++t) {
+            const float* row = &got[static_cast<size_t>(t) * V];
+            same += std::max_element(row, row + V) - row == top1[t];
+        }
+        std::vector<float> picked;
+        for (int t : positions)
+            picked.insert(picked.end(), got.begin() + static_cast<size_t>(t) * V,
+                          got.begin() + static_cast<size_t>(t + 1) * V);
+        double sum = 0;
+        for (size_t i = 0; i < want.size(); ++i) sum += std::fabs(static_cast<double>(picked[i]) - want[i]);
+        const double rel = rel_diff(picked, want);
+        std::printf(
+            "       %-4s: same top-1 as PyTorch at %d of %d positions (%.2f%%); logits at %zu positions: "
+            "max |diff| %.2e, mean %.2e, relative max %.2e\n",
+            kind == MatmulKind::Reg ? "reg" : "wmma", same, T, 100.0 * same / T, positions.size(),
+            max_abs_diff(picked, want), sum / want.size(), rel);
+        CHECK(rel <= (kind == MatmulKind::Reg ? 1e-3 : 0.05));
+    }
 }

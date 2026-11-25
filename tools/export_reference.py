@@ -19,6 +19,36 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "HuggingFaceTB/SmolLM2-135M"
 PROMPT = "The capital of France is"
+# Natural English written for this project, on several topics. Used to measure how often a faster, less exact
+# mode predicts the same next token as PyTorch.
+LONG_TEXT = (
+    "The city library will close its main reading room for six weeks this spring while the roof is "
+    "repaired. Visitors can still borrow and return books at a desk near the side entrance, and the "
+    "quiet study area will move to the second floor. Opening hours stay the same on weekdays.\n\n"
+    "The harbor wakes up long before the town does. At four in the morning the first boats start their "
+    "engines, and the smell of diesel mixes with salt and wet rope. Maria has sold coffee from a small "
+    "cart near the pier for eleven years. She says she can tell how the night went by the way the "
+    "fishermen walk toward her. When the catch was good, they talk loudly and ask for sugar. When it was "
+    "poor, they pay in silence and look at the water.\n\n"
+    "A graphics processor is built around a simple bargain. Each of its threads is slow compared with a "
+    "core of a central processor, but there are thousands of them, and they share the cost of fetching "
+    "instructions. The bargain pays off only when neighboring threads do similar work on neighboring "
+    "data. A program that ignores this rule still gives the right answer, yet it may spend most of its "
+    "time waiting for memory.\n\n"
+    "To make the bread, mix five hundred grams of flour with ten grams of salt and a small spoon of dry "
+    "yeast. Add water that feels slightly warm on your wrist, and stir until no dry patches remain. Cover "
+    "the bowl and leave it on the counter overnight. In the morning, fold the dough over itself a few "
+    "times, let it rest for an hour, and bake it in a very hot pot with the lid on.\n\n"
+    "In 1815 a volcano in what is now Indonesia erupted so violently that the following year had no real "
+    "summer in parts of Europe and North America. Snow fell in June, crops failed, and the price of grain "
+    "rose sharply. Few people at the time connected the cold weather with a mountain on the other side of "
+    "the world. The link was understood only much later, when scientists studied how ash and gas travel "
+    "through the upper atmosphere.\n\n"
+    '"Are you sure this is the right road?" asked Tom, holding the map upside down. His sister did not '
+    "answer at once. The path had narrowed to a line of flattened grass, and somewhere below them a "
+    'stream was making far more noise than a stream should. "I am sure it was the right road an hour '
+    'ago," she said at last, and they both started to laugh.'
+)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_DIR = os.path.join(ROOT, "model")
 REF_DIR = os.path.join(ROOT, "reference")
@@ -48,6 +78,24 @@ class BinWriter:
     def close(self):
         self.bin.close()
         self.man.close()
+
+
+def write_long_text_reference(tok, model):
+    """reference/long.*: PyTorch's top-1 token at every position of LONG_TEXT, full logits at some of them."""
+    ids = tok(LONG_TEXT, return_tensors="pt").input_ids
+    count = ids.shape[1]
+    if not 450 <= count <= 600:
+        raise SystemExit(f"LONG_TEXT must be 450..600 tokens, got {count}")
+    with torch.no_grad():
+        logits = model(ids).logits[0]
+    positions = sorted(set(range(0, count, 32)) | {count - 1})
+    w = BinWriter(REF_DIR, "long")
+    w.add("long.ids", ids[0].numpy().astype(np.int32))
+    w.add("long.top1", logits.argmax(dim=-1).numpy().astype(np.int32))
+    w.add("long.positions", np.array(positions, dtype=np.int32))
+    w.add("long.logits", logits[positions].numpy())
+    w.close()
+    print(f"long text reference written: {count} tokens, logits at {len(positions)} positions")
 
 
 def main():
@@ -149,6 +197,8 @@ def main():
         r.add(f"hidden_states.{i}", hs[0].numpy())
     r.add("logits", out.logits[0].numpy())
     r.close()
+
+    write_long_text_reference(tok, model)
 
     # Reference greedy generation (to check the KV cache and the generation loop in C++).
     gen_prompts = {
