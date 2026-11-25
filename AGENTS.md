@@ -24,7 +24,7 @@ If `CLAUDE.local.md` exists, read it too: it holds machine-specific paths and de
 - Laptop GPU clocks drift. For comparisons, alternate the configurations and repeat
   (see `tools/compare_llamacpp.py`). Compare the same statistic (mean with mean, median with median).
 - The llama.cpp comparison in the README keeps its caveats. Never shorten it to "faster than llama.cpp":
-  prefill is several times slower.
+  prefill is clearly slower (see the table).
 
 **Style**
 
