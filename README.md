@@ -17,8 +17,48 @@ token for token).
 | Correctness | logits within 1.05e-5 of PyTorch; CUDA Graph path is bitwise identical to the eager path |
 | Tests | 153 checks (`tests.exe`), including comparison against PyTorch activations |
 
-> Not yet done: a head-to-head comparison with llama.cpp, and int8/int4 quantization. Until the comparison
-> exists, treat the absolute numbers as "good for a from-scratch engine", not as "competitive".
+**Against llama.cpp** (same model, bf16, same GPU): single-token decode is **1.12x faster** than llama.cpp
+(437 vs 390 tok/s), but prefill is **1.9x to 4.5x slower**. Details and caveats are
+[below](#comparison-with-llamacpp).
+
+## Comparison with llama.cpp
+
+llama.cpp build `b12728` (official Windows CUDA 13.5 binary) with GGUF files from
+[ggml-org/SmolLM2-135M-GGUF](https://huggingface.co/ggml-org/SmolLM2-135M-GGUF). Median of 7 rounds in
+tok/s, min to max in parentheses. Decode is 128 single-token steps.
+
+| Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
+|---|---|---|---|
+| **MiniInfer bf16** (CUDA Graph for decode) | **437** (405-446) | 6,622 (6,595-6,639) | 5,049 (4,756-5,972) |
+| MiniInfer bf16, no graph | 339 (314-357) | | |
+| llama.cpp BF16 | 390 (377-399) | **12,870** (3,404-13,025) | **22,777** (15,599-26,007) |
+| llama.cpp Q8_0 | 454 (429-469) | 12,315 (8,995-12,576) | 25,661 (23,883-26,453) |
+| llama.cpp Q4_K_M | 450 (418-475) | 10,608 (9,850-11,226) | 23,887 (22,926-25,381) |
+
+**Method.** [tools/compare_llamacpp.py](tools/compare_llamacpp.py) alternates the engines, rotating the order
+each round, so thermal and clock drift of the laptop GPU affects all of them. Both sides report the *mean*
+per-token time of a run (`llama-bench` reports a mean). Neither side times sampling; MiniInfer's decode time
+includes copying the logits to the host. Greedy output of MiniInfer and llama.cpp BF16 was identical on 3
+prompts of 60 tokens each.
+
+**How to read it.**
+
+- The decode lead is **not** evidence that this engine is better than llama.cpp. MiniInfer is hard-wired for
+  one architecture and replays one CUDA Graph; llama.cpp is a general engine that supports many
+  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp (339 vs 390).
+- Prefill is the clear weakness: decode got the optimization work, large-batch matmul and attention did not.
+  The cause has not been profiled yet.
+- Not identical settings: llama.cpp ran with its defaults, which store the KV cache in fp16 (MiniInfer uses
+  fp32) and keep the token embedding lookup on the CPU.
+- Quantized llama.cpp is only ~15% faster than its own bf16 in decode here, although the weights are much
+  smaller. For a model this small, memory bandwidth is not the only limit.
+- One laptop GPU, Windows, one tiny model. Do not extrapolate to larger models or batched serving.
+
+To reproduce:
+
+```
+.venv\Scripts\python.exe tools\compare_llamacpp.py --llama-bench <path>\llama-bench.exe --gguf <path>\SmolLM2-135M-BF16.gguf
+```
 
 ## What is implemented
 
@@ -72,10 +112,10 @@ I profiled before optimizing each time:
 
 ### What is left on the table
 
+- Prefill: 1.9x to 4.5x behind llama.cpp, the largest known gap.
 - Device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est. 0.1-0.3 ms).
 - Bigger fusions to cut the ~0.9 ms of small-kernel latency.
-- int8/int4 weights, since decode is bandwidth-bound.
-- Comparison with llama.cpp on the same model and GPU.
+- int8/int4 weights (the quantized llama.cpp results suggest a modest decode gain on a model this small).
 
 ## Matmul benchmark (fp32, GFLOPS)
 
@@ -156,7 +196,8 @@ How correctness is established:
 src/        kernels and engine (ops.cu, gemv.cu, ops_fused.cu, lowp.cu, model.cuh, graph.cuh, gpu_alloc.cuh, ...)
             bench_*.cu, generate_cli.cu, matmul.cu: executables
 tests/      test framework and tests
-tools/      export_reference.py (model + PyTorch reference), chat.py (tokenization + CLI wrapper)
+tools/      export_reference.py (model + PyTorch reference), chat.py (tokenization + CLI wrapper),
+            compare_llamacpp.py (benchmark against llama.cpp)
 ```
 
 Source comments are written in Ukrainian.
