@@ -4,8 +4,10 @@
 
 // Naive/Tiled/Reg are for large M (prefill, benchmarks). Gemv is for small M (single-token
 // decoding): a kernel bound by memory bandwidth rather than by tile latency.
-// Auto picks Gemv when M <= kGemvMaxRows and Reg otherwise.
-enum class MatmulKind { Naive, Tiled, Reg, Gemv, Auto };
+// Wmma runs on tensor cores: bf16 weights only, with limits on the shapes (see wmma.h), and it rounds A to
+// bf16, so its results differ from the other kernels. Auto picks Gemv when M <= kGemvMaxRows and Reg
+// otherwise; it never picks Wmma.
+enum class MatmulKind { Naive, Tiled, Reg, Gemv, Wmma, Auto };
 constexpr int kGemvMaxRows = 4;
 
 // Low-level launches on raw pointers (for benchmarks).

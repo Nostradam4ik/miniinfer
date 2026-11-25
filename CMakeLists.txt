@@ -16,7 +16,7 @@ find_package(CUDAToolkit REQUIRED)
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Library of kernels and tensors (used by the benchmarks, the tests and the engine)
-add_library(miniinfer STATIC src/ops.cu src/ops_fused.cu src/gemv.cu src/lowp.cu)
+add_library(miniinfer STATIC src/ops.cu src/ops_fused.cu src/gemv.cu src/lowp.cu src/wmma.cu)
 target_link_libraries(miniinfer PUBLIC CUDA::cudart)
 
 # First steps
@@ -54,6 +54,7 @@ add_executable(tests
     tests/test_fused.cu
     tests/test_lowp.cu
     tests/test_graph.cu
+    tests/test_wmma.cu
     tests/test_reference.cu)
 target_include_directories(tests PRIVATE tests)
 target_compile_definitions(tests PRIVATE MINIINFER_ROOT="${CMAKE_SOURCE_DIR}")

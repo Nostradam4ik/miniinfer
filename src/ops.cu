@@ -1,5 +1,6 @@
 #include "ops.cuh"
 #include "gemv.h"
+#include "wmma.h"
 #include "gemv_config.h"
 #include "wt_convert.cuh"
 #include <stdexcept>
@@ -129,6 +130,10 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
         return;
     }
     if (kind == MatmulKind::Auto) kind = M <= kGemvMaxRows ? MatmulKind::Gemv : MatmulKind::Reg;
+    if (kind == MatmulKind::Wmma) {
+        launch_matmul_wmma(A, B, dt, C, M, N, K);
+        return;
+    }
     if (kind == MatmulKind::Gemv) {
         gemv_launch(A, nullptr, 0.f, B, dt, nullptr, C, M, N, K);
         return;
@@ -157,6 +162,7 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
             break;
         }
         case MatmulKind::Gemv:
+        case MatmulKind::Wmma:
         case MatmulKind::Auto:
             break;  // already handled above
     }
