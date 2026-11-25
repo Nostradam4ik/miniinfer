@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.24)
+project(MiniInfer LANGUAGES CXX CUDA)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD 17)
+
+# RTX 4060 (Ada Lovelace) = compute capability 8.9
+set(CMAKE_CUDA_ARCHITECTURES 89)
+
+find_package(CUDAToolkit REQUIRED)
+include_directories(${CMAKE_SOURCE_DIR}/src)
+
+# Бібліотека ядер і тензорів (її використовують бенчмарки, тести, далі - рушій)
+add_library(miniinfer STATIC src/ops.cu src/ops_fused.cu src/gemv.cu src/lowp.cu)
+target_link_libraries(miniinfer PUBLIC CUDA::cudart)
+
+# Тиждень 1
+add_executable(hello src/hello.cu)
+add_executable(vector_add src/vector_add.cu)
+
+# Бенчмарк matmul
+add_executable(matmul src/matmul.cu)
+target_link_libraries(matmul miniinfer CUDA::cublas)
+
+# Генерація з командного рядка (див. tools/chat.py)
+add_executable(generate src/generate_cli.cu)
+target_link_libraries(generate miniinfer)
+
+# Швидкість декодування (етап 5)
+add_executable(bench_decode src/bench_decode.cu)
+target_link_libraries(bench_decode miniinfer)
+
+add_executable(bench_ops src/bench_ops.cu)
+target_link_libraries(bench_ops miniinfer)
+
+add_executable(bench_layer_ops src/bench_layer_ops.cu)
+target_link_libraries(bench_layer_ops miniinfer)
+
+# Тести: tests.exe або ctest --test-dir build
+enable_testing()
+add_executable(tests tests/test_main.cu tests/test_tensor.cu tests/test_matmul.cu
+                     tests/test_ops.cu tests/test_layer.cu tests/test_sampler.cu tests/test_alloc.cu tests/test_fused.cu tests/test_lowp.cu tests/test_graph.cu
+                     tests/test_reference.cu)
+target_include_directories(tests PRIVATE tests)
+target_compile_definitions(tests PRIVATE MINIINFER_ROOT="${CMAKE_SOURCE_DIR}")
+target_link_libraries(tests miniinfer)
+add_test(NAME all_tests COMMAND tests)
