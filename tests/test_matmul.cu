@@ -60,8 +60,11 @@ TEST(matmul_matches_cpu_for_many_shapes) {
     struct Shape {
         int M, K, N;
     };
-    const Shape shapes[] = {{1, 1, 1},    {1, 7, 5},    {5, 1, 7},      {16, 16, 16},    {17, 33, 65},
-                            {64, 64, 64}, {65, 64, 63}, {100, 200, 50}, {257, 129, 255}, {3, 300, 2}};
+    // The reg kernel loads four elements at a time when K and N are both multiples of 4, so there are shapes
+    // with both, with only one of them, and with neither.
+    const Shape shapes[] = {{1, 1, 1},     {1, 7, 5},      {5, 1, 7},       {16, 16, 16}, {17, 33, 65}, {64, 64, 64},
+                            {65, 64, 63},  {100, 200, 50}, {257, 129, 255}, {3, 300, 2},  {5, 4, 4},    {9, 20, 68},
+                            {70, 36, 132}, {65, 100, 60},  {9, 20, 70},     {9, 22, 68}};
     for (const Shape& s : shapes) {
         std::vector<float> a = random_vec(static_cast<size_t>(s.M) * s.K, 10 + s.M);
         std::vector<float> b = random_vec(static_cast<size_t>(s.K) * s.N, 20 + s.N);
@@ -97,7 +100,8 @@ TEST(matmul_does_not_touch_memory_out_of_bounds) {
     struct Shape {
         int M, K, N;
     };
-    const Shape shapes[] = {{1, 1, 1}, {17, 33, 65}, {65, 20, 63}, {5, 100, 7}, {70, 3, 70}};
+    const Shape shapes[] = {{1, 1, 1},   {17, 33, 65}, {65, 20, 63}, {5, 100, 7},
+                            {70, 3, 70}, {5, 20, 68},  {70, 36, 132}};
     for (const Shape& s : shapes) {
         const size_t na = static_cast<size_t>(s.M) * s.K, nb = static_cast<size_t>(s.K) * s.N,
                      nc = static_cast<size_t>(s.M) * s.N;

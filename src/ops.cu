@@ -51,10 +51,15 @@ __global__ void matmul_tiled_kernel(const float* A, const float* B, float* C, in
 #define TN 4
 // B may be fp32, fp16 or bf16: each element is converted to float while the tile is loaded
 // into shared memory, and the computation is in fp32. This gives prefill with 16-bit weights without an fp32 copy.
-template <typename WT>
+// VEC = 4: every load instruction brings four adjacent elements of a row (float4 for A, 4 weights for B), so
+// a thread loads one such chunk of each tile instead of four single elements. It needs K and N to be
+// multiples of 4 (then a chunk is either completely inside the matrix or completely outside it), A aligned
+// to 16 bytes and B to 4 elements. VEC = 1 works for any shape.
+template <typename WT, int VEC>
 __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M, int N, int K) {
-    __shared__ float As[BM][BK];
-    __shared__ float Bs[BK][BM];
+    static_assert(VEC == 1 || VEC == 4, "VEC must be 1 or 4");
+    __shared__ __align__(16) float As[BM][BK];
+    __shared__ __align__(16) float Bs[BK][BM];
 
     const int tx = threadIdx.x, ty = threadIdx.y;
     const int tid = ty * blockDim.x + tx;  // 0..255
@@ -64,16 +69,24 @@ __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M, 
     float acc[TM][TN] = {};
 
     for (int t = 0; t < K; t += BK) {
-        for (int i = 0; i < 4; ++i) {
-            int idx = tid + i * 256;
+        // Both tiles have BM * BK elements; the 256 threads share them in chunks of VEC.
+        for (int idx = tid; idx < BM * BK / VEC; idx += 256) {
+            const int ar = idx / (BK / VEC), ac = idx % (BK / VEC) * VEC;
+            const int gr = blockRow + ar, gc = t + ac;
+            const bool a_inside = gr < M && gc < K;
+            if constexpr (VEC == 4) {
+                float4 chunk = make_float4(0.f, 0.f, 0.f, 0.f);
+                if (a_inside) chunk = *reinterpret_cast<const float4*>(A + static_cast<size_t>(gr) * K + gc);
+                *reinterpret_cast<float4*>(&As[ar][ac]) = chunk;
+            } else {
+                As[ar][ac] = a_inside ? A[gr * K + gc] : 0.f;
+            }
 
-            int ar = idx / BK, ac = idx % BK;
-            int gr = blockRow + ar, gc = t + ac;
-            As[ar][ac] = (gr < M && gc < K) ? A[gr * K + gc] : 0.f;
-
-            int br = idx / BM, bc = idx % BM;
-            int hr = t + br, hc = blockCol + bc;
-            Bs[br][bc] = (hr < K && hc < N) ? wt_to_float<WT>(B[static_cast<size_t>(hr) * N + hc]) : 0.f;
+            const int br = idx / (BM / VEC), bc = idx % (BM / VEC) * VEC;
+            const int hr = t + br, hc = blockCol + bc;
+            float w[VEC] = {};
+            if (hr < K && hc < N) load_weights<WT, VEC>(B + static_cast<size_t>(hr) * N + hc, w);
+            for (int j = 0; j < VEC; ++j) Bs[br][bc + j] = w[j];
         }
         __syncthreads();
 
@@ -93,6 +106,18 @@ __global__ void matmul_reg_kernel(const float* A, const WT* B, float* C, int M, 
             int c = blockCol + tx * TN + j;
             if (r < M && c < N) C[r * N + c] = acc[i][j];
         }
+}
+
+// Launches the register-tiled kernel with four-element loads when the shapes and pointers allow them.
+template <typename WT>
+static void launch_matmul_reg(const float* A, const WT* B, float* C, int M, int N, int K) {
+    const bool vec = K % 4 == 0 && N % 4 == 0 && reinterpret_cast<uintptr_t>(A) % sizeof(float4) == 0 &&
+                     reinterpret_cast<uintptr_t>(B) % (4 * sizeof(WT)) == 0;
+    const dim3 grid((N + BM - 1) / BM, (M + BM - 1) / BM), block(16, 16);
+    if (vec)
+        matmul_reg_kernel<WT, 4><<<grid, block, 0, exec_stream()>>>(A, B, C, M, N, K);
+    else
+        matmul_reg_kernel<WT, 1><<<grid, block, 0, exec_stream()>>>(A, B, C, M, N, K);
 }
 
 // B may be in any of the weight formats. Naive and Tiled work only with fp32 (teaching versions);
@@ -123,16 +148,12 @@ static void launch_matmul_raw(MatmulKind kind, const float* A, const void* B, DT
             break;
         }
         case MatmulKind::Reg: {
-            dim3 grid((N + BM - 1) / BM, (M + BM - 1) / BM);
             if (dt == DType::F32)
-                matmul_reg_kernel<float>
-                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const float*>(B), C, M, N, K);
+                launch_matmul_reg(A, static_cast<const float*>(B), C, M, N, K);
             else if (dt == DType::F16)
-                matmul_reg_kernel<__half>
-                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const __half*>(B), C, M, N, K);
+                launch_matmul_reg(A, static_cast<const __half*>(B), C, M, N, K);
             else
-                matmul_reg_kernel<__nv_bfloat16>
-                    <<<grid, block, 0, exec_stream()>>>(A, static_cast<const __nv_bfloat16*>(B), C, M, N, K);
+                launch_matmul_reg(A, static_cast<const __nv_bfloat16*>(B), C, M, N, K);
             break;
         }
         case MatmulKind::Gemv:
