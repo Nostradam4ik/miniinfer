@@ -260,6 +260,33 @@ TEST(attention_matches_cpu_for_many_shapes) {
     }
 }
 
+// The kernel loads head widths that are multiples of 4 as float4 and uses a scalar loop for the rest, so
+// both kinds are needed. Several shapes have more keys than a block has threads (each thread then handles
+// more than one key).
+TEST(attention_matches_cpu_for_any_head_width_and_many_keys) {
+    struct S {
+        int T, S, H, KV, hd, off;
+    };
+    const S shapes[] = {{2, 2, 2, 1, 2, 0},      {5, 5, 2, 2, 6, 0},      {9, 200, 3, 1, 10, 191},
+                        {3, 300, 9, 3, 64, 297}, {140, 140, 2, 1, 12, 0}, {2, 260, 2, 1, 66, 258}};
+    for (const S& s : shapes) {
+        // Small q and k keep the scores moderate, so that fp32 softmax stays close to the double reference.
+        std::vector<float> q = rnd(static_cast<size_t>(s.T) * s.H * s.hd, 170 + s.T, 0.5f);
+        std::vector<float> k = rnd(static_cast<size_t>(s.S) * s.KV * s.hd, 180 + s.S, 0.5f);
+        std::vector<float> v = rnd(static_cast<size_t>(s.S) * s.KV * s.hd, 190 + s.S);
+        std::vector<float> ref = cpu_attention(q, k, v, s.T, s.S, s.H, s.KV, s.hd, s.off);
+        Tensor out = attention(Tensor::from_host(q, {s.T, s.H * s.hd}), Tensor::from_host(k, {s.S, s.KV * s.hd}),
+                               Tensor::from_host(v, {s.S, s.KV * s.hd}), s.H, s.KV, s.hd, s.off);
+        double d = max_abs_diff(out.to_host(), ref);
+        if (d > 1e-5) {
+            std::ostringstream os;
+            os << "T=" << s.T << " S=" << s.S << " H=" << s.H << " KV=" << s.KV << " hd=" << s.hd << " off=" << s.off
+               << " diff=" << d;
+            throw TestFailure(os.str());
+        }
+    }
+}
+
 // Causality: changing keys/values AFTER position t cannot change the output at positions <= t.
 TEST(attention_is_causal) {
     const int T = 8, H = 2, KV = 1, hd = 8, cut = 4;

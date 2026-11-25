@@ -397,6 +397,29 @@ __device__ float block_reduce_max(float v, float* sh) {
     return r;
 }
 
+// Dot product of two vectors of length n. If n is a multiple of 4, they are loaded as float4: neighboring
+// threads work on different keys, which lie far apart in memory, so their loads cannot be coalesced, and
+// the Q.K phase is limited by the number of load instructions. The terms are added one by one in index
+// order, so both paths round the same way.
+// a and b must be 16-byte aligned when n is a multiple of 4. That holds for heads inside a Tensor: the
+// allocation is aligned and every head starts at a multiple of n floats.
+__device__ float dot_product(const float* a, const float* b, int n) {
+    float sum = 0.f;
+    if (n % 4 == 0) {
+        for (int i = 0; i < n; i += 4) {
+            const float4 x = *reinterpret_cast<const float4*>(a + i);
+            const float4 y = *reinterpret_cast<const float4*>(b + i);
+            sum += x.x * y.x;
+            sum += x.y * y.y;
+            sum += x.z * y.z;
+            sum += x.w * y.w;
+        }
+    } else {
+        for (int i = 0; i < n; ++i) sum += a[i] * b[i];
+    }
+    return sum;
+}
+
 // The position of the first query is read from pos_ptr (device memory) if it is not nullptr, otherwise
 // it is pos_offset. The first form is needed for the CUDA graph: one graph works for any position.
 // max_keys is how many keys fit into shared memory (and the cache): if the position from the device is
@@ -422,8 +445,7 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
     float lmax = -INFINITY;
     for (int j = threadIdx.x; j < nvalid; j += blockDim.x) {
         const float* kj = k + j * kv_stride + static_cast<size_t>(kvh) * hd;
-        float dot = 0.f;
-        for (int d = 0; d < hd; ++d) dot += qh[d] * kj[d];
+        const float dot = dot_product(qh, kj, hd);
         const float s = dot * scale;
         scores[j] = s;
         lmax = fmaxf(lmax, s);
