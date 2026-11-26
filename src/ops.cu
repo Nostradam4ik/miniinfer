@@ -390,7 +390,9 @@ Tensor rope(const Tensor& x, int num_heads, int head_dim, float theta, int pos_o
 }
 
 // ---------------------------------------------------------------------------
-// Attention: one block = (token t, head h). The Q.K scores live in shared memory.
+// Attention, two kernels with the same arithmetic. attention_kernel: one block = (token t, query head h),
+// used for decoding. attention_shared_kv_kernel: one block = (token t, KV head), used for prefill when its
+// scores fit. In both, the Q.K scores live in shared memory.
 // Steps: scores -> maximum -> exp and sum -> weighted sum of V.
 // Simple version without flash-style tiling.
 // ---------------------------------------------------------------------------
@@ -498,7 +500,8 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
 // The same computation with one block per (token t, KV head), serving the G query heads that share this KV
 // head. Every element of K and V is loaded once and used for all G heads; the per-head kernel loads it in G
 // separate blocks. For each head the operations and their order are those of attention_kernel (the same
-// threads handle the same keys), so the results are bitwise equal.
+// threads handle the same keys, because both kernels are launched with kAttentionThreads), so the results are
+// bitwise equal.
 // Shared memory holds the scores of all G heads, [G x nvalid], so fewer keys fit (see
 // attention_uses_shared_kv). Q is read from global memory. head_dim must be a multiple of 4 (float4 loads).
 template <int G>
@@ -571,6 +574,8 @@ __global__ void attention_shared_kv_kernel(const float* q, const float* k, const
 }
 
 namespace {
+// Threads per block of both attention kernels. It decides which thread sums which keys, and so the rounding.
+constexpr int kAttentionThreads = 128;
 constexpr int kSharedKvHeads = 3;  // query heads per KV head that the shared kernel is built for
 // Shared memory a kernel can use without opting in to more. The limit covers the static arrays too, so the
 // kernel's red[32] is subtracted from what is left for the scores.
@@ -579,8 +584,9 @@ constexpr size_t kSharedKvScoreBytes = kDefaultSmemBytes - 32 * sizeof(float);
 }  // namespace
 
 bool attention_uses_shared_kv(int T, int key_capacity, int num_heads, int num_kv_heads, int head_dim, bool device_pos) {
-    // Decoding (T <= kGemvMaxRows) and the CUDA graph (device position) keep the per-head kernel: with a long
-    // cache the shared kernel is slower for a single token.
+    // Decoding (T <= kGemvMaxRows) keeps the per-head kernel: with a long cache the shared kernel is slower for
+    // a single token. The shared kernel takes no device position (it has no range check, and its shared memory
+    // is sized from the host position), so the CUDA graph keeps the per-head kernel too.
     return T > kGemvMaxRows && !device_pos && num_heads == kSharedKvHeads * num_kv_heads && head_dim % 4 == 0 &&
            static_cast<size_t>(kSharedKvHeads) * key_capacity * sizeof(float) <= kSharedKvScoreBytes;
 }
@@ -607,11 +613,11 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_head
     const float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
     if (attention_uses_shared_kv(T, key_capacity, num_heads, num_kv_heads, head_dim, d_pos != nullptr)) {
         const int smem = kSharedKvHeads * key_capacity * static_cast<int>(sizeof(float));
-        attention_shared_kv_kernel<kSharedKvHeads><<<dim3(T, num_kv_heads), 128, smem, exec_stream()>>>(
+        attention_shared_kv_kernel<kSharedKvHeads><<<dim3(T, num_kv_heads), kAttentionThreads, smem, exec_stream()>>>(
             q.data(), k.data(), v.data(), out.data(), num_heads, num_kv_heads, head_dim, pos_offset, scale);
     } else {
         const int smem = key_capacity * static_cast<int>(sizeof(float));
-        attention_kernel<<<dim3(T, num_heads), 128, smem, exec_stream()>>>(
+        attention_kernel<<<dim3(T, num_heads), kAttentionThreads, smem, exec_stream()>>>(
             q.data(), k.data(), v.data(), out.data(), num_heads, num_kv_heads, head_dim, pos_offset, d_pos, S, scale);
     }
     CUDA_CHECK(cudaGetLastError());

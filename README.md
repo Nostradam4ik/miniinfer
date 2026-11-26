@@ -117,8 +117,8 @@ not show that output stays the same on other input.
 ## Comparison with llama.cpp
 
 Same model, same GPU, llama.cpp build `b12728`. Median of 7 rounds in tok/s, min to max in parentheses.
-**Prefill is clearly slower than llama.cpp.** This table was measured before the shared attention change above;
-the comparison has not been repeated.
+**This table was measured before the shared attention change above, and the comparison has not been repeated.**
+In it, MiniInfer's prefill was clearly slower than llama.cpp at 512 tokens.
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|
@@ -129,9 +129,10 @@ the comparison has not been repeated.
 | llama.cpp Q8_0 | 429 (417-461) | 11,366 (9,219-11,925) | 23,868 (22,968-24,514) |
 | llama.cpp Q4_K_M | 446 (403-462) | 10,265 (9,879-11,036) | 20,429 (18,413-23,020) |
 
-- **Prefill:** at 512 tokens llama.cpp BF16 is 2.5x faster than the default mode and 1.7x faster than `wmma`.
-  The 128-token column was unstable (see the llama.cpp BF16 range), so do not rely on it. Ratios differ
-  between runs.
+- **Prefill:** In that run, before the change, at 512 tokens llama.cpp BF16 was 2.5x faster than the default
+  mode and 1.7x faster than `wmma`. MiniInfer's 512-token prefill has since become faster, so the gap is now
+  smaller, but by how much was not measured: compare numbers only within one run. The 128-token column was
+  unstable (see the llama.cpp BF16 range), so do not rely on it. Ratios differ between runs.
 - **Decode:** MiniInfer is 1.10x faster than llama.cpp BF16 here, which does **not** show that it is the better
   engine. It is hard-wired for one architecture and replays one CUDA Graph. Without the graph it is slower than
   llama.cpp BF16, and quantized llama.cpp is faster than MiniInfer even with the graph.
