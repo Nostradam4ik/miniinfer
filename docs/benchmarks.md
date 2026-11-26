@@ -6,7 +6,8 @@ Details behind the numbers in the [README](../README.md). GPU: NVIDIA GeForce RT
 
 llama.cpp build `b12728` (official Windows CUDA 13.5 binary) with GGUF files from
 [ggml-org/SmolLM2-135M-GGUF](https://huggingface.co/ggml-org/SmolLM2-135M-GGUF). Median of 7 rounds in
-tok/s, min to max in parentheses. Decode is 128 single-token steps.
+tok/s, min to max in parentheses. Decode is 128 single-token steps. Measured before the
+[shared attention change](#shared-k-and-v-loads-in-attention).
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|
@@ -82,6 +83,36 @@ token did not change beyond the run-to-run spread, and after each of the two cha
 - The matmul kernel now loads four elements of A and of B per instruction when K and N are multiples of 4. In a
   standalone harness this was 22-24% faster, but inside the model the gain is much smaller (table above). The
   cause of the difference is not known.
+
+### Shared K and V loads in attention
+
+Three query heads share each KV head. For prefill, one attention block per (token, KV head) now serves all
+three, so K and V are loaded once instead of three times. It runs when there are more than 4 query rows, the
+position comes from the host and the scores of three heads fit into the default shared memory (at most 4085
+keys). Decoding uses the per-head kernel as before.
+
+Time of one prefill in ms, `bench_decode.exe --dtype bf16`, median (min-max) of 7 rounds that alternated the
+build before the change and the build with it:
+
+| Prompt tokens | `reg` before | `reg` after | `wmma` before | `wmma` after |
+|---|---|---|---|---|
+| 5 | 10.77 (10.71-11.31) | 10.83 (10.74-11.38) | 7.28 (7.11-7.60) | 7.21 (7.16-7.67) |
+| 16 | 10.94 (10.83-11.39) | 10.93 (10.86-11.40) | 7.33 (7.29-7.42) | 7.42 (7.31-7.86) |
+| 32 | 11.15 (11.07-11.71) | 11.11 (11.01-11.50) | 7.61 (7.59-8.14) | 7.59 (7.51-8.08) |
+| 128 | 15.17 (15.10-15.72) | 14.31 (14.27-14.34) | 10.12 (10.08-10.51) | 9.58 (9.29-10.65) |
+| 512 | 55.53 (54.72-55.72) | 42.40 (42.29-43.19) | 37.97 (37.81-38.33) | 25.42 (25.27-26.13) |
+| 1024 | 130.13 (127.09-140.61) | 105.97 (100.25-107.57) | 107.56 (101.52-120.84) | 74.60 (72.09-74.67) |
+
+- The medians fell by 24% (`reg`) and 33% (`wmma`) at 512 tokens, and by 19% and 31% at 1024. At 128 tokens
+  they fell by 5-6%; in `wmma` the ranges overlap there. At 5 to 32 tokens the differences are within the spread.
+- Decode time per token (mean of 128 steps, median of the same 7 rounds) stayed within the spread: 2.40
+  (2.23-2.74) before and 2.46 (2.26-2.81) after with the CUDA Graph, 3.07 (2.93-3.61) and 2.97 (2.76-3.02)
+  without it.
+- All logits of a 512-token prefill in the default mode are bitwise identical to the build before the change,
+  in bf16 and fp32.
+- In a standalone harness the attention kernel itself took 32-50% less time at 32 to 1024 tokens. For one token
+  with 1024 keys it took 17% more, which is why decoding keeps the per-head kernel.
+- The llama.cpp comparison and the `reg` against `wmma` tables were measured before this change.
 
 ## Matmul benchmark (fp32, GFLOPS)
 

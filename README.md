@@ -87,6 +87,13 @@ dot product, then four elements at a time in the tiled matmul. At 512 tokens the
 faster in a standalone harness but gained much less inside the model; the cause is not known.
 [Details](docs/benchmarks.md#prefill).
 
+A later trace showed attention as the largest cost of a 512-token `wmma` prefill. Three query heads share each
+KV head, so one block now serves all three and loads K and V once. In a separate before/after run
+(`bench_decode.exe --dtype bf16`, median of 7 alternated rounds) a 512-token prefill went from 55.53 to 42.40 ms
+in the default mode and from 37.97 to 25.42 ms with `wmma`, with bitwise identical logits (checked in the
+default mode). At 32 tokens and below there was no difference beyond the spread.
+[Details](docs/benchmarks.md#shared-k-and-v-loads-in-attention).
+
 ## How correctness is established
 
 - Every kernel has a CPU reference implementation.
@@ -97,20 +104,21 @@ faster in a standalone harness but gained much less inside the model; the cause 
 - CUDA Graph against the eager path in fp32, fp16 and bf16: the test requires bitwise identical K/V caches and
   logits within 1e-6 relative difference.
 - Bugs were injected on purpose (mutation checks) to confirm that the tests actually fail.
-- There are 166 tests, including comparisons against PyTorch.
+- There are 169 tests, including comparisons against PyTorch.
 
 The opt-in `--prefill-matmul wmma` mode is not expected to match: it rounds activations to bf16. Compared with
 PyTorch (fp32) on one 497-token text, it kept the same most likely next token at 492 of 497 positions (the
 default: 497 of 497). The largest logit difference at 17 sampled positions was 0.79. For this comparison
 `lm_head` also ran on tensor cores; in generation it does not. The mode saved 31-33% of prefill time at 32 to
-512 tokens (`bench_decode.exe --dtype bf16`, median of 7 alternated rounds). One text and three short prompts do
+512 tokens (`bench_decode.exe --dtype bf16`, median of 7 alternated rounds, before the shared attention change). One text and three short prompts do
 not show that output stays the same on other input.
 [Speed and accuracy tables](docs/tensor-core-prefill.md).
 
 ## Comparison with llama.cpp
 
 Same model, same GPU, llama.cpp build `b12728`. Median of 7 rounds in tok/s, min to max in parentheses.
-**Prefill is clearly slower than llama.cpp.**
+**Prefill is clearly slower than llama.cpp.** This table was measured before the shared attention change above;
+the comparison has not been repeated.
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|

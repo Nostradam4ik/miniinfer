@@ -9,7 +9,7 @@ The price is accuracy: the tensor cores take bf16 inputs, so the activations are
 (the weights are bf16 already). Speed and accuracy belong together:
 
 **Speed.** One prefill in ms, `bench_decode.exe --dtype bf16`, median of 7 rounds that alternated the
-variants:
+variants (measured before the [shared attention change](benchmarks.md#shared-k-and-v-loads-in-attention)):
 
 | Prompt tokens | `reg` | `wmma` | Time saved |
 |---|---|---|---|
