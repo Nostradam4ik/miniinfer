@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="320" viewBox="0 0 680 320" role="img" aria-label="Decode time, ms per token (lower is better): Baseline 17.0, Memory pool 12.0, GEMV kernel 5.7, Kernel fusion 3.6, fp16 weights 2.9, bf16 weights 2.7, CUDA Graph 2.2" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="680" height="320" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="20" y="32" font-size="17" font-weight="600" fill="#1f2328">Decode time, ms per token (lower is better)</text>
+  <text x="130" y="69" font-size="13" text-anchor="end" fill="#1f2328">Baseline</text>
+  <rect x="140" y="52" width="476.0" height="24" fill="#57606a"/>
+  <text x="624.0" y="69" font-size="13" font-weight="600" fill="#1f2328">17.0</text>
+  <text x="130" y="102" font-size="13" text-anchor="end" fill="#1f2328">Memory pool</text>
+  <rect x="140" y="85" width="336.0" height="24" fill="#57606a"/>
+  <text x="484.0" y="102" font-size="13" font-weight="600" fill="#1f2328">12.0</text>
+  <text x="130" y="135" font-size="13" text-anchor="end" fill="#1f2328">GEMV kernel</text>
+  <rect x="140" y="118" width="159.6" height="24" fill="#57606a"/>
+  <text x="307.6" y="135" font-size="13" font-weight="600" fill="#1f2328">5.7</text>
+  <text x="130" y="168" font-size="13" text-anchor="end" fill="#1f2328">Kernel fusion</text>
+  <rect x="140" y="151" width="100.8" height="24" fill="#57606a"/>
+  <text x="248.8" y="168" font-size="13" font-weight="600" fill="#1f2328">3.6</text>
+  <text x="130" y="201" font-size="13" text-anchor="end" fill="#1f2328">fp16 weights</text>
+  <rect x="140" y="184" width="81.2" height="24" fill="#57606a"/>
+  <text x="229.2" y="201" font-size="13" font-weight="600" fill="#1f2328">2.9</text>
+  <text x="130" y="234" font-size="13" text-anchor="end" fill="#1f2328">bf16 weights</text>
+  <rect x="140" y="217" width="75.6" height="24" fill="#57606a"/>
+  <text x="223.6" y="234" font-size="13" font-weight="600" fill="#1f2328">2.7</text>
+  <text x="130" y="267" font-size="13" text-anchor="end" fill="#1f2328">CUDA Graph</text>
+  <rect x="140" y="250" width="61.6" height="24" fill="#4a7a00"/>
+  <text x="209.6" y="267" font-size="13" font-weight="600" fill="#1f2328">2.2</text>
+  <text x="20" y="303" font-size="12" fill="#57606a">RTX 4060 Laptop, bench_decode, median of 64 steps</text>
+</svg>
