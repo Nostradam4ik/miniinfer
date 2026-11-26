@@ -8,14 +8,16 @@ runtime. It runs [SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135
 tied embeddings, 30 layers, 9 query / 3 KV heads) end to end on the GPU. It is a learning project: the goal
 was to understand where the time goes in LLM decoding.
 
-**Result:** decode speed went from **59 to 455 tokens/s (17.0 to 2.2 ms/token, 7.7x)** on an NVIDIA GeForce
-RTX 4060 Laptop (Ada, sm_89, 8 GB, ~256 GB/s), with bf16 weights and a CUDA Graph, measured by
-`bench_decode.exe` (median of 64 steps). In the default mode every step was checked against PyTorch: logits are
-within 1.05e-5 relative error and greedy generation matches token for token. An opt-in
-[tensor core prefill](docs/tensor-core-prefill.md) is faster and less exact.
+**Result:** decode speed went from **59 tokens/s (fp32, no CUDA Graph) to 455 tokens/s (bf16 weights + CUDA
+Graph)**, that is 17.0 to 2.2 ms/token (7.7x), on an NVIDIA GeForce RTX 4060 Laptop (Ada, sm_89, 8 GB,
+~256 GB/s), measured by `bench_decode.exe` (median of 64 steps). In the default mode, logits on a short
+reference prompt are within 1.05e-5 of PyTorch (relative to the largest logit), and greedy generation matches
+it token for token on two test prompts, 20 tokens each ([more checks](#how-correctness-is-established)). An
+opt-in [tensor core prefill](docs/tensor-core-prefill.md) is faster and less exact.
 
-Unedited output of one run of `python tools/chat.py "Once upon a time" --max 60` (this is a base model: it
-continues text, it does not answer questions):
+Unedited generated text of one run of `.venv\Scripts\python.exe tools\chat.py "Once upon a time" --max 60`
+(greedy, the default; the timing line is left out). This is a base model: it continues text, it does not answer
+questions.
 
 > Once upon a time, there was a little girl named Lily. She lived in a big house with her family, but she
 > didn't have many toys to play with. One day, her mom told her that she could go to a special place called a
@@ -51,7 +53,8 @@ flowchart TD
 ![Decode time per token after each step](docs/img/decode-speedup.svg)
 
 Measured with `bench_decode.exe` (median of 64 steps, including the logits copy to the host). The
-memory-bandwidth floor for fp32 weights is ~540 MB per token at ~256 GB/s = ~2.1 ms.
+memory-bandwidth floor for fp32 weights is ~540 MB per token at ~256 GB/s = ~2.1 ms
+(~1.05 ms for bf16, which is half the size).
 
 | Step | ms/token | tok/s | What changed |
 |---|---|---|---|
@@ -60,8 +63,8 @@ memory-bandwidth floor for fp32 weights is ~540 MB per token at ~256 GB/s = ~2.1
 | + GEMV kernel for M <= 4 | 5.7 | 174 | M=1 matmul: 9.0 to 2.3 ms per token (`bench_ops.exe`) |
 | + kernel fusion | 3.6 | 278 | 455 to 184 launches per token |
 | + fp16 weights | 2.9 | 347 | weights 651 to 326 MB |
-| + bf16 weights | 2.7 | 373 | same size, but lossless (fp16 flushes 24 of 163M weights to zero) |
-| + CUDA Graph (bf16) | **2.2** | **455** | one launch per step; logits bitwise identical |
+| + bf16 weights | 2.7 | 373 | same size, but lossless because the checkpoint is stored in bf16 (fp16 flushes 24 of 163M weights to zero) |
+| + CUDA Graph (bf16) | **2.2** | **455** | one launch per step; same results as without the graph |
 
 Total: 7.7x. Run-to-run spread is about +-0.2 ms (laptop GPU clocks vary with temperature).
 
@@ -88,16 +91,20 @@ faster in a standalone harness but gained much less inside the model; the cause 
 
 - Every kernel has a CPU reference implementation.
 - Activations are compared with PyTorch layer by layer, then logits and greedy generation end to end.
-- Buffers are surrounded by NaN-poisoned padding, because out-of-bounds reads normally hit zeroed memory and go
-  unnoticed. The difference helper treats NaN as a failure (`std::fmax` silently ignores NaN).
-- The CUDA Graph path is checked for bitwise equality with the eager path in fp32, fp16 and bf16.
+- The matmul tests put NaN padding after the data, because out-of-bounds reads normally hit zeroed memory and
+  go unnoticed. NaN-filled pool blocks catch outputs that a kernel does not write. The difference helper treats
+  NaN as a failure (`std::fmax` silently ignores NaN).
+- CUDA Graph against the eager path in fp32, fp16 and bf16: the test requires bitwise identical K/V caches and
+  logits within 1e-6 relative difference.
 - Bugs were injected on purpose (mutation checks) to confirm that the tests actually fail.
 - There are 166 tests, including comparisons against PyTorch.
 
-The opt-in `--prefill-matmul wmma` mode is not expected to match: it rounds activations to bf16. On one
-497-token text it kept the same most likely next token at 492 of 497 positions (the default: 497 of 497), with
-a largest logit difference of 0.79. It saved 31-33% of prefill time at 32 to 512 tokens. One text and three
-short prompts do not show that output stays the same on other input.
+The opt-in `--prefill-matmul wmma` mode is not expected to match: it rounds activations to bf16. Compared with
+PyTorch (fp32) on one 497-token text, it kept the same most likely next token at 492 of 497 positions (the
+default: 497 of 497). The largest logit difference at 17 sampled positions was 0.79. For this comparison
+`lm_head` also ran on tensor cores; in generation it does not. The mode saved 31-33% of prefill time at 32 to
+512 tokens (`bench_decode.exe --dtype bf16`, median of 7 alternated rounds). One text and three short prompts do
+not show that output stays the same on other input.
 [Speed and accuracy tables](docs/tensor-core-prefill.md).
 
 ## Comparison with llama.cpp
