@@ -104,7 +104,7 @@ default mode). At 32 tokens and below there was no difference beyond the spread.
 - CUDA Graph against the eager path in fp32, fp16 and bf16: the test requires bitwise identical K/V caches and
   logits within 1e-6 relative difference.
 - Bugs were injected on purpose (mutation checks) to confirm that the tests actually fail.
-- There are 169 tests, including comparisons against PyTorch.
+- There are 170 tests, including comparisons against PyTorch.
 
 The opt-in `--prefill-matmul wmma` mode is not expected to match: it rounds activations to bf16. Compared with
 PyTorch (fp32) on one 497-token text, it kept the same most likely next token at 492 of 497 positions (the
@@ -159,7 +159,7 @@ None of these has been tried yet.
 ## Limitations
 
 - Single model family (Llama-style, small), single GPU, batch size 1 in the optimized decode path.
-- Attention keeps scores in shared memory, so the context is limited to 12,288 tokens.
+- Attention keeps scores in shared memory, so the context is limited to 12,256 tokens.
 - Tokenization is done in Python, not in C++.
 - Tuned and measured on one GPU only.
 

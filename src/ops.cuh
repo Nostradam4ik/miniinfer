@@ -35,7 +35,9 @@ Tensor rope(const Tensor& x, int num_heads, int head_dim, float theta, int pos_o
 // q: [T x (H*hd)], k, v: [S x (KV*hd)], result [T x (H*hd)].
 // Query t (position pos_offset + t) sees keys 0..pos_offset+t, so S >= pos_offset + T.
 // Limit: S <= kMaxAttentionKeys (the scores are kept in shared memory).
-constexpr int kMaxAttentionKeys = 12288;
+// A block gets 48 KB of shared memory without opting in to more. The limit covers the kernel's static array of
+// 32 floats too, so the scores, one float per key, get the rest: 12256 keys.
+constexpr int kMaxAttentionKeys = (48 * 1024) / static_cast<int>(sizeof(float)) - 32;
 // d_pos != nullptr: the position of the first query is read from device memory (one int) and pos_offset
 // is ignored. Needed for the CUDA graph. The host then cannot validate the position; the kernel fills
 // the output with NaN if the position falls outside the k, v cache.

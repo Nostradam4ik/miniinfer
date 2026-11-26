@@ -365,6 +365,20 @@ TEST(attention_with_device_position_is_correct_for_large_caches) {
     }
 }
 
+// The advertised maximum really launches: the shared memory of the scores and of the kernel's static array
+// together must stay within the limit. Small q and k keep the fp32 softmax close to the double reference.
+TEST(attention_launches_with_the_maximum_number_of_keys) {
+    const int S = kMaxAttentionKeys, H = 2, KV = 1, hd = 8;
+    const std::vector<float> q = rnd(H * hd, 1, 0.5f), k = rnd(static_cast<size_t>(S) * KV * hd, 2, 0.5f),
+                             v = rnd(static_cast<size_t>(S) * KV * hd, 3);
+    const Tensor Q = Tensor::from_host(q, {1, H * hd}), K = Tensor::from_host(k, {S, KV * hd}),
+                 V = Tensor::from_host(v, {S, KV * hd});
+    const std::vector<float> ref = cpu_attention(q, k, v, 1, S, H, KV, hd, S - 1);
+    CHECK_NEAR(max_abs_diff(attention(Q, K, V, H, KV, hd, S - 1).to_host(), ref), 0.0, 1e-5);
+    DevInts d_pos({S - 1});
+    CHECK_NEAR(max_abs_diff(attention(Q, K, V, H, KV, hd, 0, d_pos.p).to_host(), ref), 0.0, 1e-5);
+}
+
 // On the large-M path every fused operation multiplies with the kernel it is asked for: bitwise the same as
 // the separate operations with that kernel, and with Wmma not the same as with the default.
 TEST(fused_large_m_honours_matmul_kind) {
