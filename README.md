@@ -137,13 +137,18 @@ Same model, same GPU, llama.cpp build `b12728`. Median of 7 rounds in tok/s, min
 
 [Method, all caveats and how to reproduce](docs/benchmarks.md#comparison-with-llamacpp).
 
-## What is left and limitations
+## What's next
 
-- Prefill is the largest known gap. The WMMA kernel is simple: `mma.sync` and `ldmatrix` in PTX, and a better
-  tile choice for short prompts, were not tried.
-- Ideas for decode: device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est.
-  0.1-0.3 ms), bigger fusions to cut the ~0.9 ms of small-kernel latency, int8/int4 weights (the quantized
+None of these has been tried yet.
+
+- **Prefill, the largest known gap.** The WMMA kernel is simple. To try: `mma.sync` and `ldmatrix` in PTX, and a
+  better tile choice for short prompts.
+- **Decode.** Device-side argmax for greedy decoding (skips the 196 KB logits copy every step, est.
+  0.1-0.3 ms), bigger fusions to cut the ~0.9 ms of small-kernel latency, and int8/int4 weights (the quantized
   llama.cpp results suggest a modest gain on a model this small).
+
+## Limitations
+
 - Single model family (Llama-style, small), single GPU, batch size 1 in the optimized decode path.
 - Attention keeps scores in shared memory, so the context is limited to 12,288 tokens.
 - Tokenization is done in Python, not in C++.
