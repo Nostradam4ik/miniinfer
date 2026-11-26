@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cstring>
+#include <limits>
 #include <random>
 #include "ops.cuh"
 #include "ops_cpu.h"
@@ -353,6 +355,72 @@ TEST(attention_invalid_args_throw) {
     CHECK_THROWS(attention(q, k, v, 2, 1, 4, 1));  // S < pos_offset + T
     Tensor big_k({kMaxAttentionKeys + 1, 4}), big_q({1, 8});
     CHECK_THROWS(attention(big_q, big_k, big_k, 2, 1, 4, kMaxAttentionKeys));  // too many keys
+}
+
+// Prefill uses one block per (token, KV head) when the scores of the whole group fit into shared memory.
+TEST(attention_shared_kv_selection) {
+    CHECK(attention_uses_shared_kv(5, 5, 9, 3, 64, false));
+    CHECK(attention_uses_shared_kv(512, 4085, 9, 3, 64, false));
+    CHECK(!attention_uses_shared_kv(4, 4, 9, 3, 64, false));       // decode sizes
+    CHECK(!attention_uses_shared_kv(512, 4086, 9, 3, 64, false));  // the scores do not fit
+    CHECK(!attention_uses_shared_kv(8, 8, 9, 3, 64, true));        // position on the device
+    CHECK(!attention_uses_shared_kv(8, 8, 4, 2, 64, false));       // 2 query heads per KV head
+    CHECK(!attention_uses_shared_kv(8, 8, 9, 3, 6, false));        // width not a multiple of 4
+}
+
+// One call with many query rows against calls on at most kGemvMaxRows rows each, which use the per-head
+// kernel: the bits must be equal. Cache rows after the last visible key are NaN and must not reach the result.
+TEST(attention_shared_kv_is_bitwise_equal_to_per_head) {
+    struct S {
+        int T, pos;
+    };
+    const S shapes[] = {{5, 0}, {8, 0}, {31, 7}, {129, 0}, {200, 300}, {5, 4080}, {5, 4081}};
+    const int H = 9, KV = 3, hd = 64;
+    for (const S& s : shapes) {
+        const int keys = s.pos + s.T + 3;
+        std::vector<float> q = rnd(static_cast<size_t>(s.T) * H * hd, 270 + s.T, 0.5f);
+        std::vector<float> k = rnd(static_cast<size_t>(keys) * KV * hd, 280 + s.pos, 0.5f);
+        std::vector<float> v = rnd(static_cast<size_t>(keys) * KV * hd, 290 + s.pos);
+        for (size_t i = static_cast<size_t>(s.pos + s.T) * KV * hd; i < k.size(); ++i)
+            k[i] = v[i] = std::numeric_limits<float>::quiet_NaN();
+        const Tensor K = Tensor::from_host(k, {keys, KV * hd}), V = Tensor::from_host(v, {keys, KV * hd});
+        const std::vector<float> whole =
+            attention(Tensor::from_host(q, {s.T, H * hd}), K, V, H, KV, hd, s.pos).to_host();
+        std::vector<float> pieces;
+        for (int row = 0; row < s.T; row += kGemvMaxRows) {
+            const int rows = std::min(kGemvMaxRows, s.T - row);
+            const std::vector<float> part(q.begin() + static_cast<size_t>(row) * H * hd,
+                                          q.begin() + static_cast<size_t>(row + rows) * H * hd);
+            const std::vector<float> out =
+                attention(Tensor::from_host(part, {rows, H * hd}), K, V, H, KV, hd, s.pos + row).to_host();
+            pieces.insert(pieces.end(), out.begin(), out.end());
+        }
+        for (float x : whole) CHECK(std::isfinite(x));
+        if (whole.size() != pieces.size() ||
+            std::memcmp(whole.data(), pieces.data(), whole.size() * sizeof(float)) != 0) {
+            std::ostringstream os;
+            os << "T=" << s.T << " pos=" << s.pos << ": not bitwise equal";
+            throw TestFailure(os.str());
+        }
+    }
+}
+
+TEST(attention_shared_kv_matches_cpu) {
+    struct S {
+        int T, pos;
+    };
+    const S shapes[] = {{5, 0}, {33, 12}, {130, 70}};
+    const int H = 9, KV = 3, hd = 64;
+    for (const S& s : shapes) {
+        const int keys = s.pos + s.T;
+        std::vector<float> q = rnd(static_cast<size_t>(s.T) * H * hd, 370 + s.T, 0.5f);
+        std::vector<float> k = rnd(static_cast<size_t>(keys) * KV * hd, 380 + s.T, 0.5f);
+        std::vector<float> v = rnd(static_cast<size_t>(keys) * KV * hd, 390 + s.T);
+        const std::vector<float> ref = cpu_attention(q, k, v, s.T, keys, H, KV, hd, s.pos);
+        const Tensor out = attention(Tensor::from_host(q, {s.T, H * hd}), Tensor::from_host(k, {keys, KV * hd}),
+                                     Tensor::from_host(v, {keys, KV * hd}), H, KV, hd, s.pos);
+        CHECK_NEAR(max_abs_diff(out.to_host(), ref), 0.0, 1e-5);
+    }
 }
 
 // ---- rmsnorm ---------------------------------------------------------------

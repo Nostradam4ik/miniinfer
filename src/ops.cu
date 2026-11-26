@@ -495,6 +495,96 @@ __global__ void attention_kernel(const float* q, const float* k, const float* v,
     }
 }
 
+// The same computation with one block per (token t, KV head), serving the G query heads that share this KV
+// head. Every element of K and V is loaded once and used for all G heads; the per-head kernel loads it in G
+// separate blocks. For each head the operations and their order are those of attention_kernel (the same
+// threads handle the same keys), so the results are bitwise equal.
+// Shared memory holds the scores of all G heads, [G x nvalid], so fewer keys fit (see
+// attention_uses_shared_kv). Q is read from global memory. head_dim must be a multiple of 4 (float4 loads).
+template <int G>
+__global__ void attention_shared_kv_kernel(const float* q, const float* k, const float* v, float* out, int H, int KV,
+                                           int hd, int pos_offset, float scale) {
+    extern __shared__ float scores[];  // [G x nvalid]
+    __shared__ float red[32];
+
+    const int t = blockIdx.x, kvh = blockIdx.y;
+    const int nvalid = pos_offset + t + 1;
+    const size_t kv_stride = static_cast<size_t>(KV) * hd;
+    // The G query heads of this KV head are adjacent in q and in out.
+    const size_t first = (static_cast<size_t>(t) * H + static_cast<size_t>(kvh) * G) * hd;
+
+    // Q.K: one pass over the keys of this thread, G dot products per key.
+    float lmax[G];
+#pragma unroll
+    for (int g = 0; g < G; ++g) lmax[g] = -INFINITY;
+    for (int j = threadIdx.x; j < nvalid; j += blockDim.x) {
+        const float* kj = k + j * kv_stride + static_cast<size_t>(kvh) * hd;
+        float dot[G];
+#pragma unroll
+        for (int g = 0; g < G; ++g) dot[g] = 0.f;
+        for (int i = 0; i < hd; i += 4) {
+            const float4 y = *reinterpret_cast<const float4*>(kj + i);
+#pragma unroll
+            for (int g = 0; g < G; ++g) {
+                const float4 x = *reinterpret_cast<const float4*>(q + first + g * hd + i);
+                dot[g] += x.x * y.x;
+                dot[g] += x.y * y.y;
+                dot[g] += x.z * y.z;
+                dot[g] += x.w * y.w;
+            }
+        }
+#pragma unroll
+        for (int g = 0; g < G; ++g) {
+            const float s = dot[g] * scale;
+            scores[g * nvalid + j] = s;
+            lmax[g] = fmaxf(lmax[g], s);
+        }
+    }
+
+    // Softmax, one head after another.
+    float inv[G];
+    for (int g = 0; g < G; ++g) {
+        float* head_scores = scores + g * nvalid;
+        const float gmax = block_reduce_max(lmax[g], red);
+        float lsum = 0.f;
+        for (int j = threadIdx.x; j < nvalid; j += blockDim.x) {
+            const float e = expf(head_scores[j] - gmax);
+            head_scores[j] = e;
+            lsum += e;
+        }
+        inv[g] = 1.f / block_reduce_sum(lsum, red);  // contains __syncthreads
+    }
+
+    // Weighted sum of V: thread d computes element d of all G output heads.
+    for (int d = threadIdx.x; d < hd; d += blockDim.x) {
+        float acc[G];
+#pragma unroll
+        for (int g = 0; g < G; ++g) acc[g] = 0.f;
+        for (int j = 0; j < nvalid; ++j) {
+            const float value = v[j * kv_stride + static_cast<size_t>(kvh) * hd + d];
+#pragma unroll
+            for (int g = 0; g < G; ++g) acc[g] += scores[g * nvalid + j] * value;
+        }
+#pragma unroll
+        for (int g = 0; g < G; ++g) out[first + g * hd + d] = acc[g] * inv[g];
+    }
+}
+
+namespace {
+constexpr int kSharedKvHeads = 3;  // query heads per KV head that the shared kernel is built for
+// Shared memory a kernel can use without opting in to more. The limit covers the static arrays too, so the
+// kernel's red[32] is subtracted from what is left for the scores.
+constexpr size_t kDefaultSmemBytes = 48 * 1024;
+constexpr size_t kSharedKvScoreBytes = kDefaultSmemBytes - 32 * sizeof(float);
+}  // namespace
+
+bool attention_uses_shared_kv(int T, int key_capacity, int num_heads, int num_kv_heads, int head_dim, bool device_pos) {
+    // Decoding (T <= kGemvMaxRows) and the CUDA graph (device position) keep the per-head kernel: with a long
+    // cache the shared kernel is slower for a single token.
+    return T > kGemvMaxRows && !device_pos && num_heads == kSharedKvHeads * num_kv_heads && head_dim % 4 == 0 &&
+           static_cast<size_t>(kSharedKvHeads) * key_capacity * sizeof(float) <= kSharedKvScoreBytes;
+}
+
 Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads, int num_kv_heads, int head_dim,
                  int pos_offset, const int* d_pos) {
     if (num_heads <= 0 || num_kv_heads <= 0 || head_dim <= 0 || num_heads % num_kv_heads != 0)
@@ -513,10 +603,17 @@ Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_head
                                     std::to_string(kMaxAttentionKeys) + ")");
     Tensor out = Tensor::uninitialized({T, num_heads * head_dim});
     if (T == 0) return out;
-    const int smem = (d_pos ? S : pos_offset + T) * static_cast<int>(sizeof(float));
-    attention_kernel<<<dim3(T, num_heads), 128, smem, exec_stream()>>>(
-        q.data(), k.data(), v.data(), out.data(), num_heads, num_kv_heads, head_dim, pos_offset, d_pos, S,
-        1.0f / sqrtf(static_cast<float>(head_dim)));
+    const int key_capacity = d_pos ? S : pos_offset + T;
+    const float scale = 1.0f / sqrtf(static_cast<float>(head_dim));
+    if (attention_uses_shared_kv(T, key_capacity, num_heads, num_kv_heads, head_dim, d_pos != nullptr)) {
+        const int smem = kSharedKvHeads * key_capacity * static_cast<int>(sizeof(float));
+        attention_shared_kv_kernel<kSharedKvHeads><<<dim3(T, num_kv_heads), 128, smem, exec_stream()>>>(
+            q.data(), k.data(), v.data(), out.data(), num_heads, num_kv_heads, head_dim, pos_offset, scale);
+    } else {
+        const int smem = key_capacity * static_cast<int>(sizeof(float));
+        attention_kernel<<<dim3(T, num_heads), 128, smem, exec_stream()>>>(
+            q.data(), k.data(), v.data(), out.data(), num_heads, num_kv_heads, head_dim, pos_offset, d_pos, S, scale);
+    }
     CUDA_CHECK(cudaGetLastError());
     return out;
 }

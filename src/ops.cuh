@@ -42,6 +42,10 @@ constexpr int kMaxAttentionKeys = 12288;
 Tensor attention(const Tensor& q, const Tensor& k, const Tensor& v, int num_heads, int num_kv_heads, int head_dim,
                  int pos_offset = 0, const int* d_pos = nullptr);
 
+// Whether attention() runs the kernel with one block per (query row, KV head), which loads K and V once for
+// all query heads that share the KV head. key_capacity = pos_offset + T. Both kernels give the same bits.
+bool attention_uses_shared_kv(int T, int key_capacity, int num_heads, int num_kv_heads, int head_dim, bool device_pos);
+
 // ---- Fused operations (fewer kernel launches per token) --------------------------------------
 // For small M (<= kGemvMaxRows, i.e. decoding) each one is a single launch.
 // For larger M there is a safe fallback: the same results through separate operations. Their matmuls use
