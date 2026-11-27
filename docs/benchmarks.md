@@ -6,17 +6,16 @@ Details behind the numbers in the [README](../README.md). GPU: NVIDIA GeForce RT
 
 llama.cpp build `b12728` (official Windows CUDA 13.5 binary) with GGUF files from
 [ggml-org/SmolLM2-135M-GGUF](https://huggingface.co/ggml-org/SmolLM2-135M-GGUF). Median of 7 rounds in
-tok/s, min to max in parentheses. Decode is 128 single-token steps. Measured before the
-[shared attention change](#shared-k-and-v-loads-in-attention).
+tok/s, min to max in parentheses. Decode is 128 single-token steps. Measured on 2026-11-27 at commit `c34f5a2`.
 
 | Engine | Decode | Prefill, 128 tokens | Prefill, 512 tokens |
 |---|---|---|---|
-| **MiniInfer bf16** (CUDA Graph for decode) | **407** (388-441) | 8,460 (8,226-8,482) | 9,294 (9,149-9,329) |
-| MiniInfer bf16, no graph | 342 (188-360) | | |
-| MiniInfer bf16, `wmma` prefill (rounds activations to bf16) | | 12,561 (10,847-12,673) | 13,502 (13,152-13,534) |
-| llama.cpp BF16 | 369 (336-378) | 11,282 (6,932-13,075) | **23,132** (21,930-23,782) |
-| llama.cpp Q8_0 | 429 (417-461) | 11,366 (9,219-11,925) | 23,868 (22,968-24,514) |
-| llama.cpp Q4_K_M | 446 (403-462) | 10,265 (9,879-11,036) | 20,429 (18,413-23,020) |
+| **MiniInfer bf16** (CUDA Graph for decode) | **446** (418-455) | 8,945 (8,914-8,957) | 12,067 (11,924-12,107) |
+| MiniInfer bf16, no graph | 356 (332-373) | | |
+| MiniInfer bf16, `wmma` prefill (rounds activations to bf16) | | 13,734 (13,142-13,793) | 20,229 (19,343-20,293) |
+| llama.cpp BF16 | 387 (376-394) | 14,108 (12,854-14,951) | **25,876** (25,120-26,185) |
+| llama.cpp Q8_0 | 460 (450-479) | 12,251 (9,752-13,026) | 27,348 (25,784-28,446) |
+| llama.cpp Q4_K_M | 445 (433-462) | 10,586 (9,619-10,846) | 25,637 (24,725-26,659) |
 
 **Method.** [tools/compare_llamacpp.py](../tools/compare_llamacpp.py) alternates the engines, rotating the order
 each round, so thermal and clock drift of the laptop GPU affects all of them. Both sides report the *mean*
@@ -28,30 +27,30 @@ llama.cpp BF16 was identical on 3 prompts of 60 tokens each.
 
 - The decode lead is **not** evidence that this engine is better than llama.cpp. MiniInfer is hard-wired for
   one architecture and replays one CUDA Graph; llama.cpp is a general engine that supports many
-  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (342 vs 369), and
-  quantized llama.cpp is faster than MiniInfer even with the graph.
-- Prefill was the clear weakness. In that run, before the change, at 512 tokens llama.cpp BF16 was 2.5x faster
-  than the default mode and still 1.7x faster than `wmma`. MiniInfer's 512-token prefill has since become faster
-  (see [below](#shared-k-and-v-loads-in-attention)), so the gap is now smaller, but by how much was not measured.
-- At 128 tokens llama.cpp BF16 ranged from 6,932 to 13,075 tok/s in this run, so do not rely on that column.
-  Its median here gives llama.cpp a 1.3x lead over the default mode; in two earlier runs its medians (12,122 and
-  14,468) gave 1.5x and 1.7x. The `wmma` median is above this run's llama.cpp BF16 median, but inside its range
-  and below both earlier medians, so it does not show which engine is faster.
+  architectures and backends. Without the graph, MiniInfer is slower than llama.cpp BF16 (356 vs 387). Even
+  with the graph, llama.cpp Q8_0 has a higher median (460 vs 446, the ranges overlap), and Q4_K_M (445) is level
+  with MiniInfer.
+- Prefill is the weak side. At 512 tokens llama.cpp BF16 is 2.1x faster than the default mode and 1.3x faster
+  than `wmma`.
+- At 128 tokens llama.cpp BF16 ranged from 12,854 to 14,951 tok/s in this run and is 1.6x faster than the default
+  mode. The `wmma` median (13,734) is inside that range, so it does not show which engine is faster. This column
+  has been unstable: in one earlier run llama.cpp BF16 ranged from 6,932 to 13,075 tok/s.
 - The `wmma` row is not the same computation as the default: it rounds activations to bf16 (see
   [tensor-core-prefill.md](tensor-core-prefill.md) for what that changes). How llama.cpp rounds its activations was not
   checked.
-- Compare numbers only within one run. With the same llama.cpp build, three runs of the script gave llama.cpp
-  BF16 prefill medians of 23,017, 26,873 and 23,132 tok/s at 512 tokens. The cause is not known.
+- Compare numbers only within one run. With the same llama.cpp build, four runs of the script gave llama.cpp
+  BF16 prefill medians of 23,017, 26,873, 23,132 and 25,876 tok/s at 512 tokens. The cause is not known.
 - Not identical settings: llama.cpp ran with its defaults, which store the KV cache in fp16 (MiniInfer uses
   fp32) and keep the token embedding lookup on the CPU.
-- Quantized llama.cpp is only 16-21% faster than its own bf16 in decode here, although the weights are much
+- Quantized llama.cpp is only 15-19% faster than its own bf16 in decode here, although the weights are much
   smaller. For a model this small, memory bandwidth is not the only limit.
 - One laptop GPU, Windows, one tiny model. Do not extrapolate to larger models or batched serving.
 
 To reproduce:
 
 ```
-.venv\Scripts\python.exe tools\compare_llamacpp.py --mini-wmma --llama-bench <path>\llama-bench.exe --gguf <path>\SmolLM2-135M-BF16.gguf
+.venv\Scripts\python.exe tools\compare_llamacpp.py --mini-wmma --llama-bench <path>\llama-bench.exe ^
+  --gguf <path>\SmolLM2-135M-BF16.gguf --gguf <path>\SmolLM2-135M-Q8_0.gguf --gguf <path>\SmolLM2-135M-Q4_K_M.gguf
 ```
 
 ## Prefill
@@ -113,7 +112,7 @@ build before the change and the build with it:
   in bf16 and fp32.
 - In a standalone harness the attention kernel itself took 32-50% less time at 32 to 1024 tokens. For one token
   with 1024 keys it took 17% more, which is why decoding keeps the per-head kernel.
-- The llama.cpp comparison and the `reg` against `wmma` tables were measured before this change.
+- The `reg` against `wmma` tables were measured before this change.
 
 ## Matmul benchmark (fp32, GFLOPS)
 
