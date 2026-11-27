@@ -19,10 +19,6 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 add_library(miniinfer STATIC src/ops.cu src/ops_fused.cu src/gemv.cu src/lowp.cu src/wmma.cu)
 target_link_libraries(miniinfer PUBLIC CUDA::cudart)
 
-# First steps
-add_executable(hello src/hello.cu)
-add_executable(vector_add src/vector_add.cu)
-
 # Matmul benchmark
 add_executable(matmul src/matmul.cu)
 target_link_libraries(matmul miniinfer CUDA::cublas)
