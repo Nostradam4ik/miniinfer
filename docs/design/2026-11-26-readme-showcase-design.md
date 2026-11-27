@@ -2,9 +2,9 @@
 
 ## Intent
 
-The repository is a portfolio piece. A reader from NVIDIA who spends one minute on it should conclude that the
-author understands the project and worked in a methodical way: measured, found the cause, fixed it, verified
-the result, and stated where the evidence ends.
+The repository is a portfolio piece. A reader who spends one minute on it should be able to see how the work was
+done: what was measured, the cause that was found, the fix, how the result was verified, and where the evidence
+ends.
 
 ## Goals
 
