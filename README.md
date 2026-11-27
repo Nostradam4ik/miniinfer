@@ -15,13 +15,13 @@ reference prompt are within 1.05e-5 of PyTorch (relative to the largest logit), 
 it token for token on two test prompts, 20 tokens each ([more checks](#how-correctness-is-established)). An
 opt-in [tensor core prefill](docs/tensor-core-prefill.md) is faster and less exact.
 
-Unedited generated text of one run of `.venv\Scripts\python.exe tools\chat.py "Once upon a time" --max 60`
-(greedy, the default; the timing line is left out). This is a base model: it continues text, it does not answer
-questions.
+![One run of chat.py: after a shortened startup wait, 120 tokens of a story appear in under a second](docs/img/demo.gif)
 
-> Once upon a time, there was a little girl named Lily. She lived in a big house with her family, but she
-> didn't have many toys to play with. One day, her mom told her that she could go to a special place called a
-> "school" to learn new things and become a teacher. Lily
+One run of `chat.py` with greedy decoding (the default), generated text unedited. This is not a screen capture:
+[tools/record_demo.py](tools/record_demo.py) recorded when each piece of output arrived and redraws it. **The
+startup wait of `chat.py` and `generate.exe`, 6.8 s in this run, is shortened to 1 s.** From the first generated
+text on, the timing is as recorded; only the last frame is held longer. The speed line at the end does not include
+the startup. This is a base model: it continues text, it does not answer questions.
 
 ## How it works
 
@@ -223,7 +223,7 @@ src/        kernels and engine (ops.cu, gemv.cu, ops_fused.cu, wmma.cu, lowp.cu,
             bench_*.cu, generate_cli.cu, matmul.cu: executables
 tests/      test framework and tests
 tools/      export_reference.py (model + PyTorch reference), chat.py (tokenization + CLI wrapper),
-            compare_llamacpp.py (benchmark against llama.cpp)
+            compare_llamacpp.py (benchmark against llama.cpp), record_demo.py (the GIF above, needs ffmpeg)
 docs/       benchmark details, tensor core prefill, design documents
 ```
 
